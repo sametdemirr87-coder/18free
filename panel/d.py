@@ -51,7 +51,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const SCRIPT_ID = '__SCRIPT_ID__';
     const STORAGE_KEY = 'minerbytsfree_auth_' + CLIENT_ID;
     const TELEGRAM_URL = 'https://t.me/+cxRPV2-7C_Y0Yjc0';
-    const TELEGRAM_ICON = 'data:image/svg+xml;charset=utf-8;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPCEtLSBHZW5lcmF0b3I6IEFkb2JlIElsbHVzdHJhdG9yIDIzLjAuNiwgU1ZHIEV4cG9ydCBQbHVnLUluIC4gU1ZHIFZlcnNpb246IDYuMDAgQnVpbGQgMCkgIC0tPgo8c3ZnIHZlcnNpb249IjEuMSIgaWQ9IkxheWVyXzEiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgeD0iMHB4IiB5PSIwcHgiCgkgdmlld0JveD0iMCAwIDE2MCAxNjAiIHN0eWxlPSJlbmFibGUtYmFja2dyb3VuZDpuZXcgMCAwIDE2MCAxNjA7IiB4bWw6c3BhY2U9InByZXNlcnZlIj4KPHN0eWxlIHR5cGU9InRleHQvY3NzIj4KCS5zdDB7ZmlsbC1ydWxlOmV2ZW5vZGQ7Y2xpcC1ydWxlOmV2ZW5vZGQ7ZmlsbDojMzM5MGVjO30KPC9zdHlsZT4KPHBhdGggY2xhc3M9InN0MCIgZD0iTTgwLDEzYzM3LDAsNjcsMzAsNjcsNjdjMCwzNy0zMCw2Ny02Nyw2N2MtMzcsMC02Ny0zMC02Ny02N0MxMyw0Myw0MywxMyw4MCwxM3ogTTEwOC43LDUxLjloLTAuMWMtMi41LDAtNi40LDEuNC0yNC4zLDguOEw4MS4yLDYyQzc0LDY1LDYxLDcwLjYsNDIsNzguOWMtMy4zLDEuMy01LDIuNi01LjIsMy44Yy0wLjMsMi4zLDIuOSwzLjEsNyw0LjRsMS4yLDAuNGMzLjUsMS4xLDcuOCwyLjMsMTAuMSwyLjNjMi4yLDAsNC42LTAuOCw3LjItMi42bDkuNy02LjVjMTIuNy04LjUsMTkuNC0xMi45LDIwLTEzLjFsMC4yLTAuMWMwLjQtMC4xLDAuOS0wLjEsMS4yLDAuMmMwLjQsMC40LDAuNCwxLDAuMywxLjJjLTAuMywxLjUtMTcuOCwxNy4zLTE5LjIsMTguN0w3NC40LDg4Yy0zLjgsMy45LTcuOSw2LjMtMS41LDEwLjdsMS41LDFjNC44LDMuMiw4LDUuNSwxMi45LDguN2wxLjMsMC45YzMuOSwyLjYsNyw1LjYsMTEsNS4yYzEuOC0wLjIsMy43LTEuOSw0LjctNi44bDAuMS0wLjNjMi4zLTEyLjMsNi44LTM5LjEsNy45LTUwLjFjMC4xLTEsMC0yLjItMC4xLTIuN2wwLTAuMmMtMC4xLTAuNS0wLjMtMS4yLTAuOS0xLjZDMTEwLjUsNTIuMSwxMDkuMyw1MS45LDEwOC43LDUxLjl6Ii8+Cjwvc3ZnPgo=';
+    const TELEGRAM_ICON = 'https://telegram.org/img/favicon.ico';
     let sessionToken = '';
     let loadedBotHash = '';
     let heartbeatTimer = null;
@@ -257,8 +257,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                 btn.id = 'nexusBotTelegramBtn';
                 btn.className = settingsBtn.className || 'mb-icon-btn';
                 btn.title = 'Telegram';
-                btn.style.cssText = 'width:24px;height:24px;display:inline-grid;place-items:center;background:transparent;border:0;cursor:pointer;padding:0;margin-right:8px;vertical-align:middle;';
-                btn.innerHTML = '<img src="' + TELEGRAM_ICON + '" alt="" style="width:21px;height:21px;display:block;">';
+                btn.style.cssText = 'width:22px;height:22px;display:inline-grid;place-items:center;background:transparent;border:0;cursor:pointer;padding:0;margin-right:3px;vertical-align:middle;';
+                btn.innerHTML = '<img src="' + TELEGRAM_ICON + '" alt="" style="width:19px;height:19px;display:block;border-radius:4px;">';
                 btn.onclick = (event) => {
                     event.preventDefault();
                     event.stopPropagation();
