@@ -22,8 +22,8 @@ GENERATED_DIR.mkdir(exist_ok=True)
 SCRIPT_INDEX_FILE = BASE_DIR / "generated_scripts_index.json"
 
 DEFAULT_SETTINGS = {
-    "server_url": "https://your-render-app.onrender.com",
-    "admin_token": "",
+    "server_url": "https://one8free.onrender.com",
+    "admin_token": "MbfAdmin_18free!7429",
     "selected_bot_path": str(BOT_FILE),
 }
 
