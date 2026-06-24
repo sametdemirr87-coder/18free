@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import tkinter as tk
 from pathlib import Path
@@ -566,6 +567,9 @@ class MinerBytsPanel(tk.Tk):
             client_id = "mbf_" + secrets.token_hex(8)
             script_id = "script_" + secrets.token_hex(8)
             user_name = self.license_name_var.get().strip() or self.next_user_name()
+            if self.is_reserved_user_name(user_name):
+                user_name = self.next_user_name()
+                self.license_name_var.set(user_name)
             manual_key = self.license_key_var.get().strip()
             payload = {
                 "name": user_name,
@@ -610,6 +614,9 @@ class MinerBytsPanel(tk.Tk):
             self.refresh_tree()
             if not silent:
                 self.log_line(f"Lisans listesi yenilendi: {len(self.licenses_cache)}")
+            current_name = self.license_name_var.get().strip()
+            if not current_name or self.is_reserved_user_name(current_name):
+                self.license_name_var.set(self.next_user_name())
         except Exception as exc:
             if not silent:
                 self.log_line("Lisans liste hata: " + str(exc))
@@ -760,15 +767,33 @@ class MinerBytsPanel(tk.Tk):
         return self.server_var.get().strip().rstrip("/") + path
 
     def next_user_name(self) -> str:
-        used = set()
-        for lic in self.licenses_cache:
-            name = str(lic.get("name") or "")
-            if name.lower().startswith("user") and name[4:].isdigit():
-                used.add(int(name[4:]))
+        used = self.collect_used_user_numbers()
         idx = 1
         while idx in used:
             idx += 1
         return f"User{idx}"
+
+    def is_reserved_user_name(self, name: str) -> bool:
+        match = re.fullmatch(r"user\s*(\d+)", str(name or "").strip(), flags=re.IGNORECASE)
+        if not match:
+            return False
+        return int(match.group(1)) in self.collect_used_user_numbers()
+
+    def collect_used_user_numbers(self) -> set[int]:
+        used: set[int] = set()
+        for lic in self.licenses_cache:
+            self.add_user_number(used, str(lic.get("name") or ""))
+        for path in GENERATED_DIR.glob("User*.user.js"):
+            self.add_user_number(used, path.stem.split("_", 1)[0])
+        for path_text in load_json(SCRIPT_INDEX_FILE, {}).values():
+            self.add_user_number(used, Path(str(path_text)).stem.split("_", 1)[0])
+        return used
+
+    @staticmethod
+    def add_user_number(used: set[int], name: str) -> None:
+        match = re.fullmatch(r"user\s*(\d+)", str(name or "").strip(), flags=re.IGNORECASE)
+        if match:
+            used.add(int(match.group(1)))
 
     def log_line(self, text: str):
         self.log.insert("end", text + "\n")
