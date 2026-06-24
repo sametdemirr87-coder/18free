@@ -31,7 +31,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 // @name         __CLIENT_NAME__
 // @namespace    minerbytsfree
 // @version      1.0.0
-// @description  MinerByts server lisansli bot yukleyici
+// @description  Nexus Free Bot secure loader
 // @match        https://minerbyts.com/games*
 // @match        https://minerbyts.com/ptc*
 // @grant        GM_xmlhttpRequest
@@ -49,10 +49,11 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const CLIENT_ID = '__CLIENT_ID__';
     const SCRIPT_ID = '__SCRIPT_ID__';
     const STORAGE_KEY = 'minerbytsfree_auth_' + CLIENT_ID;
-    const LICENSE_KEY = '__LICENSE_KEY__';
+    const TELEGRAM_URL = 'https://t.me/+cxRPV2-7C_Y0Yjc0';
     let sessionToken = '';
     let loadedBotHash = '';
     let heartbeatTimer = null;
+    let uiRoot = null;
 
     function gmRequest(method, url, body) {
         return new Promise((resolve) => {
@@ -68,11 +69,11 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                         if (res.status >= 400 && parsed && !parsed.error) parsed.error = 'HTTP ' + res.status;
                         resolve(parsed);
                     } catch(e) {
-                        resolve({ success:false, error:'Bozuk server yaniti', status:res.status || 0 });
+                        resolve({ success:false, error:'Bad server response', status:res.status || 0 });
                     }
                 },
-                onerror: () => resolve({ success:false, error:'Baglanti hatasi' }),
-                ontimeout: () => resolve({ success:false, error:'Zaman asimi' })
+                onerror: () => resolve({ success:false, error:'Connection error' }),
+                ontimeout: () => resolve({ success:false, error:'Request timeout' })
             });
         });
     }
@@ -85,10 +86,10 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                 timeout: 15000,
                 onload: (res) => {
                     try { resolve(JSON.parse(res.responseText || '{}')); }
-                    catch(e) { resolve({ success:false, error:'Bozuk server yaniti' }); }
+                    catch(e) { resolve({ success:false, error:'Bad server response' }); }
                 },
-                onerror: () => resolve({ success:false, error:'Baglanti hatasi' }),
-                ontimeout: () => resolve({ success:false, error:'Zaman asimi' })
+                onerror: () => resolve({ success:false, error:'Connection error' }),
+                ontimeout: () => resolve({ success:false, error:'Request timeout' })
             });
         });
     }
@@ -139,18 +140,113 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         }
     }
 
-    function log(text, bad = false) {
+    function getSavedLicenseKey() {
+        return String((loadAuth() || {}).license_key || '').trim();
+    }
+
+    function showGate(message = '') {
         try {
-            let box = document.getElementById('mbfLoaderLog');
-            if (!box) {
-                box = document.createElement('div');
-                box.id = 'mbfLoaderLog';
-                box.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:2147483647;background:rgba(8,10,16,.92);color:#dbeafe;border:1px solid rgba(96,165,250,.35);border-radius:10px;padding:10px 12px;font:12px monospace;max-width:360px;box-shadow:0 12px 35px rgba(0,0,0,.35);';
-                document.body.appendChild(box);
-            }
-            box.textContent = '[MinerBytsFree] ' + text;
-            box.style.borderColor = bad ? 'rgba(248,113,113,.55)' : 'rgba(96,165,250,.35)';
+            removeGate();
+            const saved = getSavedLicenseKey();
+            uiRoot = document.createElement('div');
+            uiRoot.id = 'nexusFreeGate';
+            uiRoot.innerHTML = `
+                <style>
+                    #nexusFreeGate { position:fixed; inset:0; z-index:2147483647; display:grid; place-items:center; font-family:Inter,Segoe UI,Arial,sans-serif; color:#f8fafc; background:radial-gradient(circle at 50% 20%, rgba(59,130,246,.24), transparent 34%), linear-gradient(180deg, rgba(3,7,18,.84), rgba(2,6,23,.98)); backdrop-filter:blur(14px); }
+                    .nfg-card { width:min(390px, calc(100vw - 32px)); border:1px solid rgba(96,165,250,.36); background:linear-gradient(180deg, rgba(15,23,42,.94), rgba(3,7,18,.96)); box-shadow:0 28px 90px rgba(0,0,0,.55), 0 0 48px rgba(37,99,235,.22); border-radius:22px; padding:26px; position:relative; overflow:hidden; animation:nfgIn .65s cubic-bezier(.2,.9,.2,1) both; }
+                    .nfg-card:before { content:""; position:absolute; inset:-2px; background:linear-gradient(115deg, transparent, rgba(96,165,250,.18), transparent); transform:translateX(-120%); animation:nfgSweep 2.8s ease-in-out infinite; }
+                    .nfg-top { position:relative; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
+                    .nfg-brand { display:grid; gap:4px; }
+                    .nfg-title { font-size:26px; line-height:1; font-weight:950; letter-spacing:.3px; }
+                    .nfg-sub { color:#93c5fd; font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:2px; }
+                    .nfg-tg { width:42px; height:42px; border-radius:50%; display:grid; place-items:center; background:#229ed9; border:0; cursor:pointer; box-shadow:0 0 28px rgba(34,158,217,.55); position:relative; }
+                    .nfg-tg:before { content:""; width:0; height:0; border-top:8px solid transparent; border-bottom:8px solid transparent; border-left:17px solid #fff; transform:translateX(2px) rotate(-18deg); }
+                    .nfg-label { position:relative; color:#cbd5e1; font-size:12px; font-weight:800; margin:16px 0 8px; }
+                    .nfg-input { position:relative; width:100%; box-sizing:border-box; border:1px solid rgba(148,163,184,.28); background:rgba(2,6,23,.78); color:#f8fafc; border-radius:14px; padding:14px 15px; outline:none; font-size:14px; font-weight:800; letter-spacing:.4px; }
+                    .nfg-input:focus { border-color:#60a5fa; box-shadow:0 0 0 4px rgba(96,165,250,.13); }
+                    .nfg-btn { position:relative; width:100%; margin-top:14px; border:0; border-radius:14px; padding:14px; color:#fff; font-weight:950; letter-spacing:1.2px; background:linear-gradient(135deg,#2563eb,#7c3aed); cursor:pointer; box-shadow:0 18px 40px rgba(37,99,235,.35); }
+                    .nfg-btn:hover { filter:brightness(1.12); transform:translateY(-1px); }
+                    .nfg-status { position:relative; min-height:18px; color:#93c5fd; font-size:12px; font-weight:800; margin-top:12px; text-align:center; }
+                    .nfg-loader { display:none; position:relative; width:54px; height:54px; margin:18px auto 2px; border-radius:50%; border:4px solid rgba(96,165,250,.18); border-top-color:#60a5fa; animation:nfgSpin .8s linear infinite; }
+                    .nfg-loading .nfg-loader { display:block; }
+                    .nfg-loading .nfg-btn, .nfg-loading .nfg-input { opacity:.52; pointer-events:none; }
+                    .nfg-burst { position:absolute; inset:50%; width:12px; height:12px; border-radius:50%; background:#fff; transform:translate(-50%,-50%) scale(0); pointer-events:none; }
+                    .nfg-success .nfg-burst { animation:nfgBurst .75s ease-out forwards; }
+                    @keyframes nfgIn { from { opacity:0; transform:translateY(18px) scale(.94); filter:blur(8px); } to { opacity:1; transform:none; filter:none; } }
+                    @keyframes nfgSweep { 45%,100% { transform:translateX(120%); } }
+                    @keyframes nfgSpin { to { transform:rotate(360deg); } }
+                    @keyframes nfgBurst { 0% { transform:translate(-50%,-50%) scale(0); opacity:.95; } 60% { transform:translate(-50%,-50%) scale(75); opacity:.55; } 100% { transform:translate(-50%,-50%) scale(95); opacity:0; } }
+                </style>
+                <div class="nfg-card">
+                    <div class="nfg-burst"></div>
+                    <div class="nfg-top">
+                        <div class="nfg-brand">
+                            <div class="nfg-sub">Secure access</div>
+                            <div class="nfg-title">Nexus Free Bot</div>
+                        </div>
+                        <button class="nfg-tg" id="nfgTelegram" title="Open Telegram"></button>
+                    </div>
+                    <label class="nfg-label" for="nfgKey">License key</label>
+                    <input class="nfg-input" id="nfgKey" placeholder="Enter your license key" value="${escapeAttr(saved)}" autocomplete="off">
+                    <button class="nfg-btn" id="nfgUnlock">UNLOCK BOT</button>
+                    <div class="nfg-loader"></div>
+                    <div class="nfg-status" id="nfgStatus">${escapeHtml(message || 'Enter your key to continue.')}</div>
+                </div>
+            `;
+            document.documentElement.appendChild(uiRoot);
+            document.getElementById('nfgTelegram').onclick = () => window.open(TELEGRAM_URL, '_blank', 'noopener,noreferrer');
+            document.getElementById('nfgUnlock').onclick = async () => {
+                const key = String(document.getElementById('nfgKey').value || '').trim();
+                if (!key) {
+                    setGateStatus('Please enter a license key.', true);
+                    return;
+                }
+                await unlockWithKey(key);
+            };
+            document.getElementById('nfgKey').addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') document.getElementById('nfgUnlock').click();
+            });
         } catch(e) {}
+    }
+
+    function setGateLoading(active, text) {
+        if (!uiRoot) return;
+        const card = uiRoot.querySelector('.nfg-card');
+        if (card) card.classList.toggle('nfg-loading', !!active);
+        setGateStatus(text || '', false);
+    }
+
+    function setGateStatus(text, bad = false) {
+        const status = document.getElementById('nfgStatus');
+        if (!status) return;
+        status.textContent = text || '';
+        status.style.color = bad ? '#f87171' : '#93c5fd';
+    }
+
+    function showGateSuccess() {
+        return new Promise((resolve) => {
+            if (!uiRoot) return resolve();
+            const card = uiRoot.querySelector('.nfg-card');
+            if (card) card.classList.add('nfg-success');
+            setGateStatus('Access granted. Launching bot...', false);
+            setTimeout(resolve, 720);
+        });
+    }
+
+    function removeGate() {
+        try {
+            const old = document.getElementById('nexusFreeGate');
+            if (old) old.remove();
+        } catch(e) {}
+        uiRoot = null;
+    }
+
+    function escapeHtml(value) {
+        return String(value || '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+
+    function escapeAttr(value) {
+        return escapeHtml(value).replace(/`/g, '&#96;');
     }
 
     function base64ToBytes(b64) {
@@ -168,10 +264,9 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         return new TextDecoder().decode(out);
     }
 
-    async function authenticate() {
-        const stored = loadAuth();
-        const licenseKey = String(stored.license_key || LICENSE_KEY || '').trim() || prompt('MinerBytsFree lisans key:');
-        if (!licenseKey) return { success:false, error:'Lisans key yok' };
+    async function authenticate(licenseKey) {
+        licenseKey = String(licenseKey || '').trim();
+        if (!licenseKey) return { success:false, error:'License key is required' };
         const accountId = collectAccountId();
         const res = await gmRequest('POST', apiUrl('/api/auth'), {
             license_key: licenseKey,
@@ -198,7 +293,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             page: location.href
         });
         if (!res || !res.success) {
-            log((res && res.error) || 'Oturum kapandi', true);
+            showGate((res && res.error) || 'Session expired. Please unlock again.');
             sessionToken = '';
             if (heartbeatTimer) clearInterval(heartbeatTimer);
         }
@@ -211,8 +306,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             + '&account_id=' + encodeURIComponent(collectAccountId());
         const bundle = await gmGet(apiUrl('/api/bot/bundle') + qs);
         if (!bundle || !bundle.success) {
-            log((bundle && bundle.error) || 'Bot cekilemedi', true);
-            return;
+            throw new Error((bundle && bundle.error) || 'Bot could not be loaded');
         }
         if (bundle.hash && loadedBotHash === bundle.hash) return;
         const code = decryptBot(bundle.encrypted || '');
@@ -225,20 +319,33 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             accountId: collectAccountId(),
             botHash: loadedBotHash
         };
-        log('Bot yuklendi: ' + (bundle.name || 'botfree.txt'));
         (0, eval)(code);
     }
 
-    async function boot() {
-        log('Lisans kontrol ediliyor...');
-        const auth = await authenticate();
+    async function unlockWithKey(key) {
+        setGateLoading(true, 'Checking your license...');
+        const auth = await authenticate(key);
         if (!auth || !auth.success) {
-            log((auth && auth.error) || 'Lisans girisi basarisiz', true);
+            setGateLoading(false, (auth && auth.error) || 'License check failed.');
+            setGateStatus((auth && auth.error) || 'License check failed.', true);
             return;
         }
-        await fetchAndRunBot();
+        setGateLoading(true, 'Loading Nexus Free Bot...');
+        try {
+            await fetchAndRunBot();
+        } catch(err) {
+            setGateLoading(false, err && err.message ? err.message : 'Bot could not be loaded.');
+            setGateStatus(err && err.message ? err.message : 'Bot could not be loaded.', true);
+            return;
+        }
+        await showGateSuccess();
+        removeGate();
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         heartbeatTimer = setInterval(heartbeat, 30000);
+    }
+
+    function boot() {
+        showGate();
     }
 
     boot();
@@ -298,6 +405,7 @@ class MinerBytsPanel(tk.Tk):
         self.admin_var = tk.StringVar(value=self.settings.get("admin_token", ""))
         self.bot_path_var = tk.StringVar(value=self.settings.get("selected_bot_path", str(BOT_FILE)))
         self.license_name_var = tk.StringVar(value="User1")
+        self.license_key_var = tk.StringVar(value="")
         self.multi_var = tk.BooleanVar(value=False)
         self.tree_menu = None
         self.build_ui()
@@ -369,6 +477,8 @@ class MinerBytsPanel(tk.Tk):
         create_box.pack(fill="x", pady=(0, 12))
         tk.Label(create_box, text="Kullanici adi", bg="#0b1020", fg="#94a3b8").pack(anchor="w", padx=10, pady=(10, 2))
         tk.Entry(create_box, textvariable=self.license_name_var, bg="#111827", fg="#f8fafc", insertbackground="#f8fafc", relief="flat").pack(fill="x", padx=10, ipady=7)
+        tk.Label(create_box, text="License key", bg="#0b1020", fg="#94a3b8").pack(anchor="w", padx=10, pady=(8, 2))
+        tk.Entry(create_box, textvariable=self.license_key_var, bg="#111827", fg="#f8fafc", insertbackground="#f8fafc", relief="flat").pack(fill="x", padx=10, ipady=7)
         tk.Checkbutton(create_box, text="Coklu hesap", variable=self.multi_var, bg="#0b1020", fg="#dbeafe", selectcolor="#111827", activebackground="#0b1020", activeforeground="#ffffff").pack(anchor="w", padx=10, pady=8)
         tk.Button(create_box, text="Key + Script Uret", command=self.generate_script, bg="#7c3aed", fg="white", relief="flat").pack(fill="x", padx=10, pady=(0, 10), ipady=8)
 
@@ -412,12 +522,16 @@ class MinerBytsPanel(tk.Tk):
             client_id = "mbf_" + secrets.token_hex(8)
             script_id = "script_" + secrets.token_hex(8)
             user_name = self.license_name_var.get().strip() or self.next_user_name()
-            lic_res = api_json("POST", self.server_url("/admin/license/create"), {
+            manual_key = self.license_key_var.get().strip()
+            payload = {
                 "name": user_name,
                 "active": True,
                 "multi_account": bool(self.multi_var.get()),
                 "allowed_client_id": client_id,
-            }, self.admin_var.get().strip())
+            }
+            if manual_key:
+                payload["key"] = manual_key
+            lic_res = api_json("POST", self.server_url("/admin/license/create"), payload, self.admin_var.get().strip())
             if not lic_res.get("success"):
                 raise RuntimeError(lic_res.get("error") or "Lisans olusmadi")
             lic = lic_res["license"]
@@ -428,8 +542,7 @@ class MinerBytsPanel(tk.Tk):
                       .replace("__CLIENT_ID__", client_id)
                       .replace("__SCRIPT_ID__", script_id)
                       .replace("__SERVER_URL__", server_url)
-                      .replace("__SERVER_HOST__", host)
-                      .replace("__LICENSE_KEY__", lic.get("key", "")))
+                      .replace("__SERVER_HOST__", host))
             out_path = GENERATED_DIR / f"{safe_name(user_name)}_{client_id[:8]}.user.js"
             out_path.write_text(script, encoding="utf-8")
             index = load_json(SCRIPT_INDEX_FILE, {})
@@ -438,7 +551,8 @@ class MinerBytsPanel(tk.Tk):
             self.log_line("Script uretildi: " + str(out_path))
             self.refresh_licenses(silent=True)
             self.license_name_var.set(self.next_user_name())
-            messagebox.showinfo("Tamam", f"Script hazir:\n{out_path}\n\nKey:\n{lic.get('key', '')}")
+            self.license_key_var.set("")
+            messagebox.showinfo("Tamam", f"Script hazir:\n{out_path}\n\nKullanici key ekraninda bu keyi girecek:\n{lic.get('key', '')}")
         except Exception as exc:
             self.log_line("Script hata: " + str(exc))
             messagebox.showerror("Hata", str(exc))
