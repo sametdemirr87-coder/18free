@@ -297,6 +297,36 @@ def ensure_shapes() -> None:
         lic.setdefault("online", False)
 
 
+def find_license_by_key(key: str | None) -> dict[str, Any] | None:
+    wanted = str(key or "").strip()
+    if not wanted:
+        return None
+    for item in RUNTIME_STATE.get("licenses") or []:
+        if isinstance(item, dict) and str(item.get("key") or "").strip() == wanted:
+            return item
+    return None
+
+
+def find_license_by_session(token: str | None) -> dict[str, Any] | None:
+    wanted = str(token or "").strip()
+    if not wanted:
+        return None
+    for item in RUNTIME_STATE.get("licenses") or []:
+        if isinstance(item, dict) and str(item.get("session_token") or "").strip() == wanted:
+            return item
+    return None
+
+
+def find_license_by_id(license_id: str | None) -> dict[str, Any] | None:
+    wanted = str(license_id or "").strip()
+    if not wanted:
+        return None
+    for item in RUNTIME_STATE.get("licenses") or []:
+        if isinstance(item, dict) and str(item.get("id") or "").strip() == wanted:
+            return item
+    return None
+
+
 def validate_client_binding(lic: dict[str, Any], client_id: str | None, script_id: str | None) -> str | None:
     incoming_client = str(client_id or "").strip()
     incoming_script = str(script_id or "").strip()
