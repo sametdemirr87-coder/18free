@@ -1,0 +1,791 @@
+// ==UserScript==
+// @name         MinerByts VIP - Kamikaze 3X V6.031
+// @namespace    http://tampermonkey.net/
+// @version      6.0.0
+// @description  3 Katı Skor, Kopyalanabilir Loglar ve Tıklama Simülatörü
+// @author       BotNexus
+// @match        https://minerbyts.com/games*
+// @match        https://minerbyts.com/ptc*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // --- OYUN MANTIKLARI ---
+    const DIFF_CONFIGS = [
+        { level: 1, targetScore: 900 },
+        { level: 2, targetScore: 1000 },
+        { level: 3, targetScore: 1100 },
+        { level: 4, targetScore: 1250 },
+        { level: 5, targetScore: 1400 }
+    ];
+
+    const GAME_CONFIGS = {
+        'coin-match': {
+            name: 'Coin Match',
+            modeLabel: '3X OVERDRIVE',
+            getScore: (winsToday = 0) => {
+                const cfg = DIFF_CONFIGS[Math.min(winsToday, DIFF_CONFIGS.length - 1)];
+                return (cfg.targetScore * 3) + Math.floor(Math.random() * 300);
+            },
+            getBaseTarget: (winsToday = 0) => DIFF_CONFIGS[Math.min(winsToday, DIFF_CONFIGS.length - 1)].targetScore,
+            getHashrate: (score) => Math.max(0.5, Math.round((score / 180) * 100) / 100),
+            timeRange: [50, 75]
+        },
+        'coin-2048': {
+            name: 'Coin 2048',
+            modeLabel: 'MULTI TEST',
+            getScore: () => 19500 + Math.floor(Math.random() * 4500),
+            getBaseTarget: () => 0,
+            getHashrate: () => 0,
+            timeRange: [60, 90]
+        },
+        'coin-flip': {
+            name: 'Coin Memory',
+            modeLabel: 'MEMORY TEST',
+            getScore: (winsToday = 0) => {
+                const cfgs = [
+                    { pairs: 8, matchBase: 85, comboBonus: 17 },
+                    { pairs: 8, matchBase: 85, comboBonus: 17 },
+                    { pairs: 9, matchBase: 85, comboBonus: 16 },
+                    { pairs: 10, matchBase: 84, comboBonus: 15 },
+                    { pairs: 10, matchBase: 82, comboBonus: 14 }
+                ];
+                const cfg = cfgs[Math.min(4, Math.max(0, winsToday || 0))];
+                let score = 0;
+                let combo = 1;
+                for(let i = 0; i < cfg.pairs; i++) {
+                    score += cfg.matchBase + ((combo - 1) * cfg.comboBonus);
+                    combo = Math.min(9, combo + 1);
+                }
+                return score + Math.floor(Math.random() * 18);
+            },
+            getBaseTarget: (winsToday = 0) => ['Lv.1','Lv.2','Lv.3','Lv.4','Lv.5'][Math.min(4, Math.max(0, winsToday || 0))],
+            getHashrate: () => 0,
+            timeRange: [45, 75]
+        },
+        'cryptonoid': {
+            name: 'Cryptonoid',
+            modeLabel: 'BREAKOUT TEST',
+            getScore: () => 500,
+            getBaseTarget: (winsToday = 0) => {
+                const cfgs = [
+                    { lives: 3, bonus: 0.0 },
+                    { lives: 3, bonus: 0.4 },
+                    { lives: 3, bonus: 0.8 },
+                    { lives: 2, bonus: 1.4 },
+                    { lives: 2, bonus: 2.0 }
+                ];
+                const cfg = cfgs[Math.min(4, Math.max(0, winsToday || 0))];
+                return `${cfg.lives} lives • launch +${cfg.bonus}`;
+            },
+            getHashrate: () => 0,
+            timeRange: [45, 70]
+        },
+        'flip-coin': {
+            name: 'Flip Coin',
+            modeLabel: 'MULTI TEST',
+            getScore: () => 25 + Math.floor(Math.random() * 6),
+            getBaseTarget: () => 0,
+            getHashrate: () => 0,
+            timeRange: [35, 60]
+        },
+        'token-blaster': {
+            name: 'Token Blaster',
+            modeLabel: 'MULTI TEST',
+            getScore: () => 850 + Math.floor(Math.random() * 250),
+            getBaseTarget: () => 0,
+            getHashrate: () => 0,
+            timeRange: [45, 65]
+        }
+    };
+
+    const MB_LANG_KEY = 'minerbyts_vip_lang_v1';
+    const MB_SETTINGS_KEY = 'minerbyts_vip_settings_v1';
+    let currentLang = localStorage.getItem(MB_LANG_KEY) === 'en' ? 'en' : 'tr';
+    let SETTINGS = (() => {
+        try { return { switchMin: 3, switchMax: 8, ...(JSON.parse(localStorage.getItem(MB_SETTINGS_KEY) || '{}')) }; }
+        catch(e) { return { switchMin: 3, switchMax: 8 }; }
+    })();
+
+    const I18N = {
+        tr: {
+            start: 'START', stop: 'STOP', settings: 'Ayarlar', language: 'Dil', save: 'Kaydet', close: 'Kapat', switchDelay: 'Oyun geçiş süresi (sn)', min: 'Min', max: 'Max',
+            showcase: '🎮 OYUN VİTRİNİ', gameList: '🎮 OYUN LİSTESİ', loadingGames: 'Oyunlar çekiliyor...', noGameCard: 'Oyun kartı bulunamadı.',
+            random: 'Random Sırayla', coinMatch: 'Coin Match (3X)', systemLoaded: 'Multi-game bot yüklendi. START basınca oyunları random sırayla oynar.',
+            clickPlay: 'TIKLA & OYNAT', locked: 'KİLİTLİ', selected: '🎮 Vitrinden seçildi: {game}',
+            startLog: '🚀 START: Bot random sırayla oyunları oynayacak.', stopLog: '🛑 Sistem durduruldu.', allLimited: '✅ Tüm oyunlar limitte veya oynanacak oyun kalmadı.',
+            physicalClick: '[GÜVENLİK] {game} için fiziksel tıklama simüle edildi.', checking: '{game} durumu sorgulanıyor...',
+            limitNext: '[LİMİT] {game} günlük limit dolu, sıradaki oyuna geçiliyor...', targetScore: 'Hedef: {target} | 3X Skor: {score} 🚀',
+            scoreInfo: '{game} | Skor: {score} | GH/s: {hashrate}', statusRetry: 'Durum çekilemedi, tekrar deneniyor.', netErr: 'Bağlantı Hatası: {err}',
+            gameStarted: '⚔️ {game} başladı! {sec} sn beklenecek. GH/s: {hashrate}', producedScore: 'Üretilen Skor: {score}', readySend: 'Gönderime Hazır!',
+            sending: '[API] {game} paketi fırlatılıyor...', waitingConfirm: '🔄 ONAY BEKLENİYOR', serverAnswer: 'Sunucu Cevabı: {data}',
+            won: '🏆 {game} KAZANDIN! Skor: {score} | Hashrate: +{hashrate} GH/s 🚀', limitDone: '[LİMİT] {game} günlük görev tamamlandı, sıradaki oyuna geçiliyor...',
+            rejected: '❌ Sunucu reddetti veya limit koymuş olabilir.', networkSendErr: 'Ağ Hatası: {err}', active3x: '🔥 3X OVERDRIVE AKTİF', activeGame: '🔥 {game} AKTİF',
+            languageSaved: '✅ Ayarlar kaydedildi.', switchWait: '⏳ Sıradaki oyuna geçmeden önce {sec} sn bekleniyor...', rightsUpdated: '🎟️ {game} hakkı güncellendi: {remaining}/5 • win {wins}/5'
+        },
+        en: {
+            start: 'START', stop: 'STOP', settings: 'Settings', language: 'Language', save: 'Save', close: 'Close', switchDelay: 'Game switch delay (sec)', min: 'Min', max: 'Max',
+            showcase: '🎮 GAME SHOWCASE', gameList: '🎮 GAME LIST', loadingGames: 'Loading games...', noGameCard: 'No game cards found.',
+            random: 'Random Sequence', coinMatch: 'Coin Match (3X)', systemLoaded: 'Multi-game bot loaded. Press START to play games in random order.',
+            clickPlay: 'CLICK & PLAY', locked: 'LOCKED', selected: '🎮 Selected from showcase: {game}',
+            startLog: '🚀 START: Bot will play games in random order.', stopLog: '🛑 System stopped.', allLimited: '✅ All games are limited or no playable game left.',
+            physicalClick: '[SECURITY] Physical click simulated for {game}.', checking: 'Checking {game} status...',
+            limitNext: '[LIMIT] {game} daily limit reached, switching to next game...', targetScore: 'Target: {target} | 3X Score: {score} 🚀',
+            scoreInfo: '{game} | Score: {score} | GH/s: {hashrate}', statusRetry: 'Could not fetch status, retrying.', netErr: 'Connection Error: {err}',
+            gameStarted: '⚔️ {game} started! Waiting {sec}s. GH/s: {hashrate}', producedScore: 'Generated Score: {score}', readySend: 'Ready to send!',
+            sending: '[API] Sending {game} package...', waitingConfirm: '🔄 WAITING CONFIRMATION', serverAnswer: 'Server Response: {data}',
+            won: '🏆 {game} WON! Score: {score} | Hashrate: +{hashrate} GH/s 🚀', limitDone: '[LIMIT] {game} daily task complete, switching to next game...',
+            rejected: '❌ Server rejected or limit may be active.', networkSendErr: 'Network Error: {err}', active3x: '🔥 3X OVERDRIVE ACTIVE', activeGame: '🔥 {game} ACTIVE',
+            languageSaved: '✅ Settings saved.', switchWait: '⏳ Waiting {sec}s before switching to next game...', rightsUpdated: '🎟️ {game} rights updated: {remaining}/5 • win {wins}/5'
+        }
+    };
+
+    function t(key, vars = {}) {
+        let out = I18N[currentLang]?.[key] || I18N.tr[key] || key;
+        Object.entries(vars).forEach(([k, v]) => out = out.replaceAll(`{${k}}`, String(v)));
+        return out;
+    }
+
+    let isAuto = false;
+    let isPlaying = false;
+    let winsToday = 0;
+    let activeTimer = null;
+    let forcedNextSlug = '';
+    let randomQueue = [];
+    let limitSkipCount = 0;
+    let gameRightsState = {};
+
+    // --- LÜKS VIP CSS TASARIMI ---
+    const style = document.createElement('style');
+    style.innerHTML = `
+        .mb-window { position: fixed; z-index: 9999999; font-family: 'Barlow', sans-serif; user-select: none;
+            background: linear-gradient(180deg, rgba(20,5,5,0.96) 0%, rgba(10,2,2,0.98) 100%); border: 1px solid rgba(255,0,0,0.5); border-radius: 16px;
+            box-shadow: 0 25px 60px rgba(255,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05); backdrop-filter: blur(12px); display: flex; flex-direction: column; overflow: hidden; }
+
+        .mb-win-head { padding: 12px 16px; background: rgba(255,0,0,0.2); border-bottom: 1px solid rgba(255,0,0,0.3); display: flex; justify-content: space-between; align-items: center; cursor: move; }
+        .mb-win-title { color: #ff3333; font-weight: 900; font-size: 15px; letter-spacing: 2px; text-shadow: 0 0 15px rgba(255,0,0,0.8); pointer-events: none; }
+        .mb-icon-btn { background: transparent; border: none; font-size: 16px; color: #7a80a0; cursor: pointer; transition: 0.2s; padding: 0; }
+        .mb-icon-btn:hover { color: #fff; transform: scale(1.1); text-shadow: 0 0 8px rgba(255,255,255,0.5); }
+
+        .mb-win-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+        #mbHub { top: 20px; right: 20px; width: 320px; }
+
+        .mb-btn-main { background: linear-gradient(135deg, #ff0000, #aa0000); color: #fff; border: 1px solid #ff5252; padding: 14px; border-radius: 12px; font-weight: 900; font-size: 16px; cursor: pointer; box-shadow: 0 8px 20px rgba(255,82,82,0.3); transition: all 0.3s; text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 1px 2px rgba(0,0,0,0.5);}
+        .mb-btn-main.stopped { background: linear-gradient(135deg, #333, #111); border-color: #555; box-shadow: 0 8px 20px rgba(0,0,0,0.5); color: #888; }
+        .mb-btn-main:hover:not(.stopped) { filter: brightness(1.2); transform: translateY(-2px); box-shadow: 0 10px 25px rgba(255,0,0,0.5); }
+
+        .mb-btn-sub { background: rgba(255,170,0,0.1); color: #ffaa00; border: 1px solid rgba(255,170,0,0.3); padding: 12px; border-radius: 10px; font-weight: 800; font-size: 13px; cursor: pointer; transition: 0.2s; letter-spacing: 1px; }
+        .mb-btn-sub:hover { background: rgba(255,170,0,0.2); box-shadow: 0 0 15px rgba(255,170,0,0.3); }
+
+        .mb-playing-panel { background: rgba(255, 82, 82, 0.05); border: 1px solid rgba(255, 82, 82, 0.2); border-radius: 10px; padding: 15px; text-align: center; position: relative; overflow: hidden; display: none; }
+        .mb-pp-kicker { font-size: 10px; color: #ff5252; font-weight: 900; letter-spacing: 2px; margin-bottom: 8px; animation: pulseOp 1.5s infinite; }
+
+        .mb-loader-wrap { position: relative; width: 60px; height: 60px; margin: 10px auto; }
+        .mb-loader-circle { width: 100%; height: 100%; border-radius: 50%; background: conic-gradient(var(--c, #ff5252) var(--pct, 0%), transparent 0); display: flex; align-items: center; justify-content: center; position: relative; }
+        .mb-loader-circle::before { content: ''; position: absolute; inset: 4px; background: #0e1120; border-radius: 50%; }
+        .mb-loader-text { position: relative; z-index: 2; font-weight: 900; font-size: 14px; color: #fff; }
+
+        @keyframes pulseOp { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        #mbGamesWin { top: 20px; right: 360px; width: 360px; display: none; }
+        .mb-games-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-height: 400px; overflow-y: auto; padding-right: 4px; }
+        .mb-scraped-card { background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px; text-align: center; position: relative; overflow: hidden; transition: 0.2s; }
+        .mb-scraped-card.locked { opacity: 0.5; filter: grayscale(1); border-color: rgba(255,82,82,0.3); }
+        .mb-sc-img { width: 100%; height: 60px; object-fit: cover; border-radius: 6px; margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.05); }
+        .mb-sc-title { font-size: 11px; font-weight: 800; color: #e8eaf5; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .mb-sc-plays { font-size: 10px; font-family: 'Share Tech Mono', monospace; color: #ffaa00; font-weight: bold; background: rgba(255,170,0,0.1); padding: 2px 6px; border-radius: 6px; display: inline-block; }
+
+        /* LOG EKRANI - FAREYLE SEÇİLİP KOPYALANABİLİR */
+        .mb-logs {
+            background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+            padding: 10px; height: 130px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #b7c6e8;
+            user-select: text !important; cursor: text;
+        }
+        .mb-log-item { margin-bottom: 4px; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 4px; }
+        .mb-log-time { color: #6b7280; margin-right: 4px; }
+        .mb-log-sys { color: #ffaa00; }
+        .mb-log-ok { color: #4ade80; }
+        .mb-log-warn { color: #ff9a3c; }
+        .mb-log-err { color: #ff5252; }
+
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #ff5252; border-radius: 2px; }
+    `;
+    document.head.appendChild(style);
+
+    // --- HTML İNŞASI ---
+    const hubDiv = document.createElement('div');
+    hubDiv.id = 'mbHub'; hubDiv.className = 'mb-window';
+    hubDiv.innerHTML = `
+        <div class="mb-win-head" id="mbDragHub">
+            <div class="mb-win-title">BOTNEXUS VIP 3X 🚀</div>
+            <button id="mbSettingsBtn" class="mb-icon-btn" title="${t('settings')}">⚙️</button>
+        </div>
+        <div class="mb-win-body">
+            <button id="mbBtnToggle" class="mb-btn-main stopped">${t('start')}</button>
+            <button id="mbBtnGames" class="mb-btn-sub">${t('showcase')}</button>
+            <button id="mbBtnTasks" class="mb-btn-sub">GOREVLER</button>
+
+            <div id="mbPlayingPanel" class="mb-playing-panel">
+                <div id="mbPpStatus" class="mb-pp-kicker">${t('active3x')}</div>
+                <div class="mb-loader-wrap">
+                    <div id="mbLoader" class="mb-loader-circle" style="--pct: 0%; --c: #ff0000;">
+                        <span id="mbSec" class="mb-loader-text">0s</span>
+                    </div>
+                </div>
+                <div style="font-size:11px; color:#ffaa00; margin-top:5px; font-weight:bold;" id="mbSimInfo">---</div>
+            </div>
+
+            <div class="mb-logs" id="mbLogBox">
+                <div class="mb-log-item"><span class="mb-log-sys">[SYSTEM]</span> ${t('systemLoaded')}</div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(hubDiv);
+
+    const gamesDiv = document.createElement('div');
+    gamesDiv.id = 'mbGamesWin'; gamesDiv.className = 'mb-window';
+    gamesDiv.innerHTML = `
+        <div class="mb-win-head" id="mbDragGames">
+            <div id="mbGamesTitle" class="mb-win-title" style="color:#ffaa00;">${t('gameList')}</div>
+            <button class="mb-icon-btn" onclick="document.getElementById('mbGamesWin').style.display='none'">✖</button>
+        </div>
+        <div class="mb-win-body">
+            <div class="mb-games-grid" id="mbGamesGrid">
+                <div style="color:#7a80a0; font-size:12px; text-align:center; grid-column: span 2;">${t('loadingGames')}</div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(gamesDiv);
+
+    const tasksDiv = document.createElement('div');
+    tasksDiv.id = 'mbTasksWin'; tasksDiv.className = 'mb-window';
+    tasksDiv.style.cssText = 'top:20px;right:700px;width:420px;display:none;';
+    tasksDiv.innerHTML = `
+        <div class="mb-win-head" id="mbDragTasks">
+            <div class="mb-win-title" style="color:#7cf2ce;">GOREVLER</div>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <button id="mbRefreshTasks" class="mb-icon-btn" title="Gorevleri yenile">YENILE</button>
+                <button class="mb-icon-btn" onclick="document.getElementById('mbTasksWin').style.display='none'">KAPAT</button>
+            </div>
+        </div>
+        <div class="mb-win-body">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <div id="mbTaskCount" style="color:#7a80a0;font-size:12px;font-weight:800;">Hazir</div>
+                <button id="mbAutoTasksInfo" class="mb-btn-sub" style="padding:8px 10px;opacity:.65;" title="Captcha ve odul dogrulamasi manuel kalir.">OTO TAMAMLA</button>
+            </div>
+            <div class="mb-logs" id="mbTasksList" style="height:360px;">
+                <div class="mb-log-item"><span class="mb-log-sys">[PTC]</span> Gorevler icin yenileye basin.</div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(tasksDiv);
+
+    // --- ELEMENT REFERANSLARI ---
+    const mbBtnToggle = document.getElementById('mbBtnToggle');
+    const mbSettingsBtn = document.getElementById('mbSettingsBtn');
+    const mbLogBox = document.getElementById('mbLogBox');
+    const mbPlayingPanel = document.getElementById('mbPlayingPanel');
+    const mbPpStatus = document.getElementById('mbPpStatus');
+    const mbLoader = document.getElementById('mbLoader');
+    const mbSec = document.getElementById('mbSec');
+    const mbSimInfo = document.getElementById('mbSimInfo');
+    const mbBtnTasks = document.getElementById('mbBtnTasks');
+    const mbTasksList = document.getElementById('mbTasksList');
+    const mbTaskCount = document.getElementById('mbTaskCount');
+    const mbRefreshTasks = document.getElementById('mbRefreshTasks');
+    const mbAutoTasksInfo = document.getElementById('mbAutoTasksInfo');
+
+    // --- SÜRÜKLE BIRAK ---
+    function makeDraggable(winId, handleId) {
+        const win = document.getElementById(winId);
+        const handle = document.getElementById(handleId);
+        let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+        handle.onmousedown = (e) => {
+            e.preventDefault(); pos3 = e.clientX; pos4 = e.clientY;
+            document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
+            document.onmousemove = (e) => {
+                e.preventDefault();
+                pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY;
+                pos3 = e.clientX; pos4 = e.clientY;
+                win.style.top = (win.offsetTop - pos2) + "px";
+                win.style.left = (win.offsetLeft - pos1) + "px";
+            };
+        };
+    }
+    makeDraggable('mbHub', 'mbDragHub');
+    makeDraggable('mbGamesWin', 'mbDragGames');
+    makeDraggable('mbTasksWin', 'mbDragTasks');
+
+    function logYaz(mesaj, tip = '') {
+        const time = new Date().toLocaleTimeString('tr-TR', { hour12: false });
+        mbLogBox.innerHTML += `<div class="mb-log-item ${tip}"><span class="mb-log-time">[${time}]</span> ${mesaj}</div>`;
+        mbLogBox.scrollTop = mbLogBox.scrollHeight;
+    }
+
+    function randSwitchDelayMs() {
+        const min = Math.max(0, parseInt(SETTINGS.switchMin) || 0);
+        const max = Math.max(min, parseInt(SETTINGS.switchMax) || min);
+        const sec = Math.floor(Math.random() * (max - min + 1)) + min;
+        return sec * 1000;
+    }
+
+    function scheduleNextGame() {
+        if(!isAuto) return;
+        const delay = randSwitchDelayMs();
+        logYaz(t('switchWait', { sec: Math.round(delay / 1000) }), 'mb-log-warn');
+        setTimeout(baslat, delay);
+    }
+
+    function updateLanguageUI() {
+        setRunButton(isAuto);
+        const gamesBtn = document.getElementById('mbBtnGames');
+        if(gamesBtn) gamesBtn.innerHTML = t('showcase');
+        const tasksBtn = document.getElementById('mbBtnTasks');
+        if(tasksBtn) tasksBtn.textContent = 'GOREVLER';
+        const gamesTitle = document.getElementById('mbGamesTitle');
+        if(gamesTitle) gamesTitle.textContent = t('gameList');
+        const settingsBtn = document.getElementById('mbSettingsBtn');
+        if(settingsBtn) settingsBtn.title = t('settings');
+        const settingsTitle = document.getElementById('mbSettingsTitle');
+        if(settingsTitle) settingsTitle.textContent = '⚙️ ' + t('settings');
+        const langLabel = document.getElementById('mbLangLabel');
+        if(langLabel) langLabel.textContent = t('language');
+        const saveBtn = document.getElementById('mbSaveSettings');
+        if(saveBtn) saveBtn.textContent = t('save');
+        const delayLabel = document.getElementById('mbSwitchDelayLabel');
+        if(delayLabel) delayLabel.textContent = t('switchDelay');
+        const minInput = document.getElementById('mbSwitchMin');
+        const maxInput = document.getElementById('mbSwitchMax');
+        if(minInput) minInput.placeholder = t('min');
+        if(maxInput) maxInput.placeholder = t('max');
+        oyunlariVitrineDiz();
+    }
+
+    function setRunButton(running) {
+        mbBtnToggle.classList.toggle('stopped', !running);
+        mbBtnToggle.innerHTML = running ? t('stop') : t('start');
+    }
+
+    function stopBot(label = '') {
+        isAuto = false;
+        isPlaying = false;
+        forcedNextSlug = '';
+        randomQueue = [];
+        limitSkipCount = 0;
+        if(activeTimer) clearInterval(activeTimer);
+        setRunButton(false);
+        mbPlayingPanel.style.display = 'none';
+        logYaz(label || t('stopLog'), 'mb-log-warn');
+    }
+
+    function openSettingsModal() {
+        let modal = document.getElementById('mbSettingsWin');
+        if(modal) { modal.remove(); return; }
+        modal = document.createElement('div');
+        modal.id = 'mbSettingsWin';
+        modal.className = 'mb-window';
+        modal.style.cssText = 'top:82px;right:20px;width:280px;';
+        modal.innerHTML = `
+            <div class="mb-win-head" id="mbDragSettings">
+                <div id="mbSettingsTitle" class="mb-win-title" style="color:#ffaa00;">⚙️ ${t('settings')}</div>
+                <button class="mb-icon-btn" onclick="document.getElementById('mbSettingsWin').remove()">✖</button>
+            </div>
+            <div class="mb-win-body">
+                <label id="mbLangLabel" style="color:#ffaa00;font-size:12px;font-weight:900;">${t('language')}</label>
+                <select id="mbLangSelect" style="width:100%;background:rgba(0,0,0,0.55);color:#ffaa00;border:1px solid rgba(255,170,0,0.35);border-radius:10px;padding:10px;font-weight:800;outline:none;">
+                    <option value="tr" ${currentLang === 'tr' ? 'selected' : ''}>Türkçe</option>
+                    <option value="en" ${currentLang === 'en' ? 'selected' : ''}>English</option>
+                </select>
+                <label id="mbSwitchDelayLabel" style="color:#ffaa00;font-size:12px;font-weight:900;margin-top:4px;">${t('switchDelay')}</label>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <input id="mbSwitchMin" type="number" min="0" value="${SETTINGS.switchMin}" placeholder="${t('min')}" style="width:100%;box-sizing:border-box;background:rgba(0,0,0,0.55);color:#ffaa00;border:1px solid rgba(255,170,0,0.35);border-radius:10px;padding:10px;font-weight:800;outline:none;">
+                    <input id="mbSwitchMax" type="number" min="0" value="${SETTINGS.switchMax}" placeholder="${t('max')}" style="width:100%;box-sizing:border-box;background:rgba(0,0,0,0.55);color:#ffaa00;border:1px solid rgba(255,170,0,0.35);border-radius:10px;padding:10px;font-weight:800;outline:none;">
+                </div>
+                <button id="mbSaveSettings" class="mb-btn-sub">${t('save')}</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        makeDraggable('mbSettingsWin', 'mbDragSettings');
+        document.getElementById('mbSaveSettings').onclick = () => {
+            currentLang = document.getElementById('mbLangSelect').value === 'en' ? 'en' : 'tr';
+            const minVal = Math.max(0, parseInt(document.getElementById('mbSwitchMin')?.value) || 0);
+            const maxVal = Math.max(minVal, parseInt(document.getElementById('mbSwitchMax')?.value) || minVal);
+            SETTINGS.switchMin = minVal;
+            SETTINGS.switchMax = maxVal;
+            localStorage.setItem(MB_LANG_KEY, currentLang);
+            localStorage.setItem(MB_SETTINGS_KEY, JSON.stringify(SETTINGS));
+            mbLogBox.innerHTML = `<div class="mb-log-item"><span class="mb-log-sys">[SYSTEM]</span> ${t('languageSaved')}</div>`;
+            updateLanguageUI();
+        };
+    }
+
+    mbSettingsBtn.onclick = openSettingsModal;
+
+    function shuffleGames(list) {
+        const arr = [...list];
+        for(let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+
+    function updateGameRights(slug, data = {}, logIt = false) {
+        if(!GAME_CONFIGS[slug]) return;
+        const prev = gameRightsState[slug] || {};
+        const wins = data.wins_today !== undefined ? Number(data.wins_today) : Number(prev.wins || 0);
+        const remaining = data.remaining !== undefined ? Number(data.remaining) : Math.max(0, Number(prev.remaining ?? 5) - (data.wins_today !== undefined ? 1 : 0));
+        const limited = !!data.daily_limit_reached || remaining <= 0 || wins >= 5;
+        gameRightsState[slug] = { remaining, wins, limited, updatedAt: Date.now() };
+        if(limited) randomQueue = randomQueue.filter(x => x !== slug);
+        if(logIt) logYaz(t('rightsUpdated', { game: GAME_CONFIGS[slug].name, remaining, wins }), limited ? 'mb-log-warn' : 'mb-log-sys');
+    }
+
+    async function buildPlayableQueue() {
+        const playable = [];
+        for(const slug of Object.keys(GAME_CONFIGS)) {
+            if(!isAuto) return [];
+            try {
+                const res = await fetch(`https://minerbyts.com/games/status?slug=${encodeURIComponent(slug)}&_=${Date.now()}`, { credentials: 'same-origin', cache: 'no-store' });
+                const data = await res.json();
+                const remainingPlays = data.remaining !== undefined ? data.remaining : 5;
+                const wins = data.wins_today || 0;
+                updateGameRights(slug, data, false);
+                if(data.status === 'ok' && !data.daily_limit_reached && remainingPlays > 0 && wins < 5) {
+                    playable.push(slug);
+                }
+            } catch(e) {}
+        }
+        return shuffleGames(playable);
+    }
+
+    async function getNextGameSlug() {
+        if(forcedNextSlug && GAME_CONFIGS[forcedNextSlug]) {
+            const slug = forcedNextSlug;
+            forcedNextSlug = '';
+            return slug;
+        }
+        if(!randomQueue.length) randomQueue = await buildPlayableQueue();
+        return randomQueue.shift() || '';
+    }
+
+    // --- FİZİKSEL TIKLAMA SİMÜLATÖRÜ (ÖNEMLİ KORUMA) ---
+    function fizikselTiklamaSimuleEt(element) {
+        if (!element) return;
+        ['mouseenter', 'mousedown', 'mouseup', 'click'].forEach(eventType => {
+            element.dispatchEvent(new MouseEvent(eventType, { view: window, bubbles: true, cancelable: true, buttons: 1 }));
+        });
+        element.style.transform = 'scale(0.95)';
+        setTimeout(() => element.style.transform = '', 150);
+    }
+
+    function extractSlugFromCard(card) {
+        const id = card?.id || card?.querySelector?.('[id^="gbtn-"]')?.id || '';
+        let match = String(id).match(/gbtn-([a-z0-9-]+)/i);
+        if(match?.[1]) return match[1];
+        const href = card?.getAttribute?.('href') || card?.querySelector?.('a[href]')?.getAttribute('href') || '';
+        match = String(href).match(/(?:slug=|games\/)([a-z0-9-]+)/i);
+        if(match?.[1]) return match[1];
+        const title = (card?.querySelector?.('.game-title')?.innerText || '').trim().toLowerCase();
+        return Object.entries(GAME_CONFIGS).find(([, cfg]) => cfg.name.toLowerCase() === title)?.[0] || '';
+    }
+
+    function simulateGameCardClick(slug) {
+        const gameCard = document.getElementById(`gbtn-${slug}`)
+            || Array.from(document.querySelectorAll('.game-card')).find(card => extractSlugFromCard(card) === slug);
+        if (!gameCard) return false;
+        const gercekHref = gameCard.getAttribute('href');
+        gameCard.removeAttribute('href');
+        fizikselTiklamaSimuleEt(gameCard);
+        if(gercekHref !== null) gameCard.setAttribute('href', gercekHref);
+        return true;
+    }
+
+    window.mbSelectGameFromPanel = function(slug) {
+        if(!GAME_CONFIGS[slug]) return;
+        forcedNextSlug = slug;
+        logYaz(t('selected', { game: GAME_CONFIGS[slug].name }), 'mb-log-sys');
+        simulateGameCardClick(slug);
+        if(activeTimer) clearInterval(activeTimer);
+        mbPlayingPanel.style.display = 'none';
+        isPlaying = false;
+        if(!isAuto) {
+            isAuto = true;
+            limitSkipCount = 0;
+            setRunButton(true);
+        }
+        setTimeout(baslat, 500);
+    };
+
+    function oyunlariVitrineDiz() {
+        const cards = document.querySelectorAll('.game-card');
+        let html = '';
+        cards.forEach(card => {
+            const img = card.querySelector('.game-thumb')?.src || '';
+            const title = card.querySelector('.game-title')?.innerText || 'Unknown';
+            const slug = extractSlugFromCard(card);
+            const known = !!GAME_CONFIGS[slug];
+            let plays = card.querySelector('.game-plays-count')?.innerText || '0/5';
+            const isLocked = card.querySelector('.game-play-btn')?.classList.contains('disabled');
+            if(known && gameRightsState[slug]) plays = `${gameRightsState[slug].remaining}/5`;
+            if(isLocked) plays = t('locked');
+
+            html += `
+                <div class="mb-scraped-card ${isLocked ? 'locked' : ''}" ${known && !isLocked ? `onclick="mbSelectGameFromPanel('${slug}')" style="cursor:pointer;"` : ''}>
+                    <img src="${img}" class="mb-sc-img">
+                    <div class="mb-sc-title">${title}</div>
+                    <div class="mb-sc-plays">${plays}</div>
+                </div>
+            `;
+        });
+        document.getElementById('mbGamesGrid').innerHTML = html || `<div style="color:#ff5252; grid-column:span 2; text-align:center;">${t('noGameCard')}</div>`;
+    }
+
+    setTimeout(oyunlariVitrineDiz, 1500);
+
+    document.getElementById('mbBtnGames').onclick = () => {
+        const w = document.getElementById('mbGamesWin');
+        w.style.display = w.style.display === 'flex' ? 'none' : 'flex';
+        if(w.style.display === 'flex') oyunlariVitrineDiz();
+    };
+
+    function cleanText(value) {
+        return String(value || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function escapeUi(value) {
+        return String(value || '').replace(/[&<>"']/g, (char) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[char]);
+    }
+
+    function parsePtcTasks(doc) {
+        return Array.from(doc.querySelectorAll('.ptc-ad-card')).map((card, index) => {
+            const title = cleanText(card.querySelector('.ptc-ad-title')?.textContent) || `Gorev ${index + 1}`;
+            const desc = cleanText(card.querySelector('.ptc-ad-desc')?.textContent);
+            const source = cleanText(card.querySelector('.ptc-source-badge')?.textContent) || 'MinerByts';
+            const metas = Array.from(card.querySelectorAll('.ptc-ad-meta-item')).map(x => cleanText(x.textContent)).filter(Boolean);
+            const linkEl = card.querySelector('.ptc-go-btn[href]');
+            const onclick = card.querySelector('.ptc-go-btn')?.getAttribute('onclick') || '';
+            const onclickMatch = onclick.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
+            const url = linkEl?.href || onclickMatch?.[1] || '';
+            return { title, desc, source, metas, url };
+        }).filter(task => task.url);
+    }
+
+    function renderPtcTasks(tasks) {
+        mbTaskCount.textContent = `${tasks.length} gorev listelendi`;
+        if(!tasks.length) {
+            mbTasksList.innerHTML = '<div class="mb-log-item mb-log-warn">PTC gorevi bulunamadi.</div>';
+            return;
+        }
+        mbTasksList.innerHTML = tasks.map((task, index) => `
+            <div class="mb-log-item" style="display:grid;gap:6px;">
+                <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+                    <div style="min-width:0;">
+                        <div style="color:#e8eaf5;font-weight:900;">${index + 1}. ${escapeUi(task.title)}</div>
+                        <div style="color:#7cf2ce;font-size:10px;font-weight:800;">${escapeUi(task.source)}</div>
+                    </div>
+                    <button class="mb-btn-sub" style="padding:7px 10px;font-size:11px;" data-mb-task-open="${encodeURIComponent(task.url)}">AC</button>
+                </div>
+                ${task.desc ? `<div style="color:#b7c6e8;font-size:11px;">${escapeUi(task.desc)}</div>` : ''}
+                ${task.metas.length ? `<div style="color:#ffaa00;font-size:10px;">${escapeUi(task.metas.join(' | '))}</div>` : ''}
+            </div>
+        `).join('');
+    }
+
+    async function loadPtcTasks() {
+        mbTaskCount.textContent = 'Gorevler yukleniyor...';
+        mbTasksList.innerHTML = '<div class="mb-log-item"><span class="mb-log-sys">[PTC]</span> Liste cekiliyor...</div>';
+        try {
+            let doc = document;
+            if(!location.pathname.startsWith('/ptc') || !document.querySelector('.ptc-ad-card')) {
+                const res = await fetch('https://minerbyts.com/ptc?_=' + Date.now(), { credentials: 'same-origin', cache: 'no-store' });
+                const html = await res.text();
+                doc = new DOMParser().parseFromString(html, 'text/html');
+            }
+            renderPtcTasks(parsePtcTasks(doc));
+        } catch(err) {
+            mbTaskCount.textContent = 'Hata';
+            mbTasksList.innerHTML = `<div class="mb-log-item mb-log-err">Gorevler cekilemedi: ${cleanText(err.message)}</div>`;
+        }
+    }
+
+    mbBtnTasks.onclick = () => {
+        const w = document.getElementById('mbTasksWin');
+        w.style.display = w.style.display === 'flex' ? 'none' : 'flex';
+        if(w.style.display === 'flex') loadPtcTasks();
+    };
+    mbRefreshTasks.onclick = loadPtcTasks;
+    mbAutoTasksInfo.onclick = () => logYaz('[PTC] Oto tamamlama/captcha dogrulama manuel birakildi. Gorevi AC ile acip captcha ve claim adimini kendin tamamla.', 'mb-log-warn');
+    mbTasksList.addEventListener('click', (event) => {
+        const btn = event.target.closest('[data-mb-task-open]');
+        if(!btn) return;
+        const url = decodeURIComponent(btn.getAttribute('data-mb-task-open') || '');
+        if(url) window.location.href = url;
+    });
+
+    mbBtnToggle.onclick = () => {
+        if(!isAuto) {
+            isAuto = true;
+            isPlaying = false;
+            forcedNextSlug = '';
+            randomQueue = [];
+            limitSkipCount = 0;
+            setRunButton(true);
+            logYaz(t('startLog'), 'mb-log-sys');
+            setTimeout(baslat, 500);
+        } else {
+            stopBot(t('stopLog'));
+        }
+    };
+
+    async function baslat() {
+        if (!isAuto) return;
+        isPlaying = true;
+        mbPlayingPanel.style.display = 'none';
+
+        const selectedSlug = await getNextGameSlug();
+        if(!selectedSlug) {
+            stopBot(t('allLimited'));
+            return;
+        }
+        const config = GAME_CONFIGS[selectedSlug] || GAME_CONFIGS['coin-match'];
+
+        if(simulateGameCardClick(selectedSlug)) {
+            logYaz(t('physicalClick', { game: config.name }), 'mb-log-sys');
+        }
+        logYaz(t('checking', { game: config.name }), 'mb-log-warn');
+        try {
+            const res = await fetch(`https://minerbyts.com/games/status?slug=${encodeURIComponent(selectedSlug)}&_=${Date.now()}`, { credentials: 'same-origin', cache: 'no-store' });
+            const data = await res.json();
+
+            if (data.status === 'ok') {
+                winsToday = data.wins_today || 0;
+                let remainingPlays = data.remaining !== undefined ? data.remaining : 5;
+                updateGameRights(selectedSlug, data, false);
+
+                if (data.daily_limit_reached || remainingPlays <= 0 || winsToday >= 5) {
+                    logYaz(t('limitNext', { game: config.name }), 'mb-log-warn');
+                    limitSkipCount++;
+                    oyunlariVitrineDiz();
+                    if(limitSkipCount >= Object.keys(GAME_CONFIGS).length) {
+                        stopBot(t('allLimited'));
+                        return;
+                    }
+                    scheduleNextGame();
+                    return;
+                }
+
+                limitSkipCount = 0;
+
+                const baseTarget = config.getBaseTarget(winsToday);
+                const skor = config.getScore(winsToday);
+                const hashrate = config.getHashrate(skor);
+
+                if(selectedSlug === 'coin-match') {
+                    logYaz(t('targetScore', { target: baseTarget, score: skor }), 'mb-log-sys');
+                } else {
+                    logYaz(t('scoreInfo', { game: config.name, score: skor, hashrate }), 'mb-log-sys');
+                }
+
+                let waitSn = Math.floor(Math.random() * 4) + 3;
+                setTimeout(() => { oyunSimuleEt(selectedSlug, config, skor, hashrate); }, waitSn * 1000);
+
+            } else {
+                logYaz(t('statusRetry'), 'mb-log-err');
+                isPlaying = false;
+                setTimeout(baslat, 5000);
+            }
+        } catch (err) {
+            logYaz(t('netErr', { err: err.message }), 'mb-log-err');
+            isPlaying = false;
+            setTimeout(baslat, 5000);
+        }
+    }
+
+    function oyunSimuleEt(slug, config, skor, hashrate) {
+        if (!isAuto) return;
+
+        const [minTime, maxTime] = config.timeRange || [50, 75];
+        let oynanisSuresi = Math.floor(Math.random() * (maxTime - minTime + 1)) + minTime;
+
+        logYaz(t('gameStarted', { game: config.name, sec: oynanisSuresi, hashrate }), 'mb-log-warn');
+
+        mbPlayingPanel.style.display = 'block';
+        mbPpStatus.textContent = slug === 'coin-match' ? t('active3x') : t('activeGame', { game: config.name.toUpperCase() });
+        mbPpStatus.style.color = '#ff0000';
+        mbSimInfo.textContent = t('producedScore', { score: skor });
+        mbLoader.style.setProperty('--c', '#ff0000');
+
+        let kalanSure = oynanisSuresi;
+        activeTimer = setInterval(() => {
+            if (!isAuto) { clearInterval(activeTimer); mbPlayingPanel.style.display = 'none'; return; }
+
+            kalanSure--;
+            mbSec.textContent = kalanSure + 's';
+            mbLoader.style.setProperty('--pct', `${((oynanisSuresi - kalanSure) / oynanisSuresi) * 100}%`);
+
+            if (kalanSure <= 0) {
+                clearInterval(activeTimer);
+                mbSimInfo.textContent = t('readySend');
+                veriyiGonder(slug, config, skor, hashrate);
+            }
+        }, 1000);
+    }
+
+    async function veriyiGonder(slug, config, skor, hashrate) {
+        if (!isAuto) return;
+
+        logYaz(t('sending', { game: config.name }), 'mb-log-sys');
+        mbPpStatus.textContent = t('waitingConfirm');
+        mbPpStatus.style.color = '#ffaa00';
+        mbLoader.style.setProperty('--c', '#ffaa00');
+        mbSec.textContent = '...';
+
+        const payload = new URLSearchParams({
+            slug: slug,
+            result: 'win',
+            score: String(skor),
+            hashrate_gh: String(hashrate)
+        });
+
+        try {
+            const res = await fetch(`https://minerbyts.com/games/report_result?` + payload.toString(), {
+                method: 'GET', credentials: 'same-origin'
+            });
+            const data = await res.json();
+
+            logYaz(t('serverAnswer', { data: JSON.stringify(data) }), 'mb-log-sys');
+
+            if (data.wins_today !== undefined) {
+                updateGameRights(slug, data, true);
+                logYaz(t('won', { game: config.name, score: skor, hashrate }), 'mb-log-ok');
+                isPlaying = false;
+                oyunlariVitrineDiz();
+
+                if (data.wins_today >= 5 || data.daily_limit_reached || gameRightsState[slug]?.remaining <= 0) {
+                    logYaz(t('limitDone', { game: config.name }), 'mb-log-ok');
+                    mbPlayingPanel.style.display = 'none';
+                    scheduleNextGame();
+                } else {
+                    scheduleNextGame();
+                }
+            } else {
+                logYaz(t('rejected'), 'mb-log-err');
+                isPlaying = false;
+                setTimeout(baslat, 5000);
+            }
+        } catch (error) {
+            logYaz(t('networkSendErr', { err: error.message }), 'mb-log-err');
+            isPlaying = false;
+            setTimeout(baslat, 5000);
+        }
+    }
+
+})();
