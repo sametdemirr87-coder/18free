@@ -50,6 +50,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const SCRIPT_ID = '__SCRIPT_ID__';
     const STORAGE_KEY = 'minerbytsfree_auth_' + CLIENT_ID;
     const TELEGRAM_URL = 'https://t.me/+cxRPV2-7C_Y0Yjc0';
+    const TELEGRAM_ICON = 'data:image/svg+xml;charset=utf-8;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPCEtLSBHZW5lcmF0b3I6IEFkb2JlIElsbHVzdHJhdG9yIDIzLjAuNiwgU1ZHIEV4cG9ydCBQbHVnLUluIC4gU1ZHIFZlcnNpb246IDYuMDAgQnVpbGQgMCkgIC0tPgo8c3ZnIHZlcnNpb249IjEuMSIgaWQ9IkxheWVyXzEiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgeD0iMHB4IiB5PSIwcHgiCgkgdmlld0JveD0iMCAwIDE2MCAxNjAiIHN0eWxlPSJlbmFibGUtYmFja2dyb3VuZDpuZXcgMCAwIDE2MCAxNjA7IiB4bWw6c3BhY2U9InByZXNlcnZlIj4KPHN0eWxlIHR5cGU9InRleHQvY3NzIj4KCS5zdDB7ZmlsbC1ydWxlOmV2ZW5vZGQ7Y2xpcC1ydWxlOmV2ZW5vZGQ7ZmlsbDojMzM5MGVjO30KPC9zdHlsZT4KPHBhdGggY2xhc3M9InN0MCIgZD0iTTgwLDEzYzM3LDAsNjcsMzAsNjcsNjdjMCwzNy0zMCw2Ny02Nyw2N2MtMzcsMC02Ny0zMC02Ny02N0MxMyw0Myw0MywxMyw4MCwxM3ogTTEwOC43LDUxLjloLTAuMWMtMi41LDAtNi40LDEuNC0yNC4zLDguOEw4MS4yLDYyQzc0LDY1LDYxLDcwLjYsNDIsNzguOWMtMy4zLDEuMy01LDIuNi01LjIsMy44Yy0wLjMsMi4zLDIuOSwzLjEsNyw0LjRsMS4yLDAuNGMzLjUsMS4xLDcuOCwyLjMsMTAuMSwyLjNjMi4yLDAsNC42LTAuOCw3LjItMi42bDkuNy02LjVjMTIuNy04LjUsMTkuNC0xMi45LDIwLTEzLjFsMC4yLTAuMWMwLjQtMC4xLDAuOS0wLjEsMS4yLDAuMmMwLjQsMC40LDAuNCwxLDAuMywxLjJjLTAuMywxLjUtMTcuOCwxNy4zLTE5LjIsMTguN0w3NC40LDg4Yy0zLjgsMy45LTcuOSw2LjMtMS41LDEwLjdsMS41LDFjNC44LDMuMiw4LDUuNSwxMi45LDguN2wxLjMsMC45YzMuOSwyLjYsNyw1LjYsMTEsNS4yYzEuOC0wLjIsMy43LTEuOSw0LjctNi44bDAuMS0wLjNjMi4zLTEyLjMsNi44LTM5LjEsNy45LTUwLjFjMC4xLTEsMC0yLjItMC4xLTIuN2wwLTAuMmMtMC4xLTAuNS0wLjMtMS4yLTAuOS0xLjZDMTEwLjUsNTIuMSwxMDkuMyw1MS45LDEwOC43LDUxLjl6Ii8+Cjwvc3ZnPgo=';
     let sessionToken = '';
     let loadedBotHash = '';
     let heartbeatTimer = null;
@@ -152,26 +153,29 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             uiRoot.id = 'nexusFreeGate';
             uiRoot.innerHTML = `
                 <style>
-                    #nexusFreeGate { position:fixed; inset:0; z-index:2147483647; display:grid; place-items:center; font-family:Inter,Segoe UI,Arial,sans-serif; color:#f8fafc; background:radial-gradient(circle at 50% 20%, rgba(59,130,246,.24), transparent 34%), linear-gradient(180deg, rgba(3,7,18,.84), rgba(2,6,23,.98)); backdrop-filter:blur(14px); }
-                    .nfg-card { width:min(390px, calc(100vw - 32px)); border:1px solid rgba(96,165,250,.36); background:linear-gradient(180deg, rgba(15,23,42,.94), rgba(3,7,18,.96)); box-shadow:0 28px 90px rgba(0,0,0,.55), 0 0 48px rgba(37,99,235,.22); border-radius:22px; padding:26px; position:relative; overflow:hidden; animation:nfgIn .65s cubic-bezier(.2,.9,.2,1) both; }
-                    .nfg-card:before { content:""; position:absolute; inset:-2px; background:linear-gradient(115deg, transparent, rgba(96,165,250,.18), transparent); transform:translateX(-120%); animation:nfgSweep 2.8s ease-in-out infinite; }
+                    #nexusFreeGate { position:fixed; inset:0; z-index:2147483647; display:grid; place-items:center; font-family:Inter,Segoe UI,Arial,sans-serif; color:#fff8dc; background:radial-gradient(circle at 50% 18%, rgba(250,204,21,.20), transparent 33%), radial-gradient(circle at 20% 80%, rgba(180,83,9,.16), transparent 28%), linear-gradient(180deg, rgba(8,6,2,.88), rgba(1,1,1,.98)); backdrop-filter:blur(16px); }
+                    .nfg-card { width:min(410px, calc(100vw - 32px)); border:1px solid rgba(250,204,21,.44); background:linear-gradient(180deg, rgba(20,15,5,.96), rgba(3,3,3,.98)); box-shadow:0 28px 90px rgba(0,0,0,.62), 0 0 55px rgba(234,179,8,.24), inset 0 1px 0 rgba(255,255,255,.08); border-radius:24px; padding:28px; position:relative; overflow:hidden; animation:nfgIn .65s cubic-bezier(.2,.9,.2,1) both; }
+                    .nfg-card:before { content:""; position:absolute; inset:-2px; background:linear-gradient(115deg, transparent, rgba(250,204,21,.23), transparent); transform:translateX(-120%); animation:nfgSweep 2.8s ease-in-out infinite; }
+                    .nfg-card:after { content:""; position:absolute; inset:1px; border-radius:22px; pointer-events:none; border:1px solid rgba(255,255,255,.04); }
                     .nfg-top { position:relative; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
                     .nfg-brand { display:grid; gap:4px; }
-                    .nfg-title { font-size:26px; line-height:1; font-weight:950; letter-spacing:.3px; }
-                    .nfg-sub { color:#93c5fd; font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:2px; }
-                    .nfg-tg { width:42px; height:42px; border-radius:50%; display:grid; place-items:center; background:#229ed9; border:0; cursor:pointer; box-shadow:0 0 28px rgba(34,158,217,.55); position:relative; }
-                    .nfg-tg:before { content:""; width:0; height:0; border-top:8px solid transparent; border-bottom:8px solid transparent; border-left:17px solid #fff; transform:translateX(2px) rotate(-18deg); }
-                    .nfg-label { position:relative; color:#cbd5e1; font-size:12px; font-weight:800; margin:16px 0 8px; }
-                    .nfg-input { position:relative; width:100%; box-sizing:border-box; border:1px solid rgba(148,163,184,.28); background:rgba(2,6,23,.78); color:#f8fafc; border-radius:14px; padding:14px 15px; outline:none; font-size:14px; font-weight:800; letter-spacing:.4px; }
-                    .nfg-input:focus { border-color:#60a5fa; box-shadow:0 0 0 4px rgba(96,165,250,.13); }
-                    .nfg-btn { position:relative; width:100%; margin-top:14px; border:0; border-radius:14px; padding:14px; color:#fff; font-weight:950; letter-spacing:1.2px; background:linear-gradient(135deg,#2563eb,#7c3aed); cursor:pointer; box-shadow:0 18px 40px rgba(37,99,235,.35); }
+                    .nfg-title { font-size:28px; line-height:1; font-weight:950; letter-spacing:.4px; color:#facc15; text-shadow:0 0 24px rgba(250,204,21,.32); }
+                    .nfg-sub { color:#d6a93b; font-size:12px; font-weight:900; text-transform:uppercase; letter-spacing:2.5px; }
+                    .nfg-tg { width:46px; height:46px; border-radius:50%; display:grid; place-items:center; background:rgba(15,23,42,.72); border:1px solid rgba(250,204,21,.36); cursor:pointer; box-shadow:0 0 28px rgba(34,158,217,.36); position:relative; padding:0; }
+                    .nfg-tg img { width:32px; height:32px; display:block; }
+                    .nfg-label { position:relative; color:#facc15; font-size:12px; font-weight:900; margin:16px 0 8px; letter-spacing:.6px; }
+                    .nfg-input { position:relative; width:100%; box-sizing:border-box; border:1px solid rgba(250,204,21,.28); background:rgba(0,0,0,.72); color:#fff8dc; border-radius:14px; padding:14px 15px; outline:none; font-size:14px; font-weight:900; letter-spacing:.5px; }
+                    .nfg-input::placeholder { color:rgba(250,204,21,.42); }
+                    .nfg-input:focus { border-color:#facc15; box-shadow:0 0 0 4px rgba(250,204,21,.12); }
+                    .nfg-btn { position:relative; width:100%; margin-top:14px; border:0; border-radius:14px; padding:14px; color:#111; font-weight:950; letter-spacing:1.4px; background:linear-gradient(135deg,#facc15,#f59e0b,#fde68a); cursor:pointer; box-shadow:0 18px 40px rgba(250,204,21,.30); }
                     .nfg-btn:hover { filter:brightness(1.12); transform:translateY(-1px); }
-                    .nfg-status { position:relative; min-height:18px; color:#93c5fd; font-size:12px; font-weight:800; margin-top:12px; text-align:center; }
-                    .nfg-loader { display:none; position:relative; width:54px; height:54px; margin:18px auto 2px; border-radius:50%; border:4px solid rgba(96,165,250,.18); border-top-color:#60a5fa; animation:nfgSpin .8s linear infinite; }
+                    .nfg-status { position:relative; min-height:18px; color:#facc15; font-size:12px; font-weight:900; margin-top:12px; text-align:center; }
+                    .nfg-loader { display:none; position:relative; width:54px; height:54px; margin:18px auto 2px; border-radius:50%; border:4px solid rgba(250,204,21,.18); border-top-color:#facc15; animation:nfgSpin .8s linear infinite; }
                     .nfg-loading .nfg-loader { display:block; }
                     .nfg-loading .nfg-btn, .nfg-loading .nfg-input { opacity:.52; pointer-events:none; }
-                    .nfg-burst { position:absolute; inset:50%; width:12px; height:12px; border-radius:50%; background:#fff; transform:translate(-50%,-50%) scale(0); pointer-events:none; }
+                    .nfg-burst { position:absolute; inset:50%; width:12px; height:12px; border-radius:50%; background:#facc15; transform:translate(-50%,-50%) scale(0); pointer-events:none; }
                     .nfg-success .nfg-burst { animation:nfgBurst .75s ease-out forwards; }
+                    .nfg-mini { position:relative; margin-top:10px; color:rgba(255,248,220,.48); text-align:center; font-size:11px; font-weight:800; }
                     @keyframes nfgIn { from { opacity:0; transform:translateY(18px) scale(.94); filter:blur(8px); } to { opacity:1; transform:none; filter:none; } }
                     @keyframes nfgSweep { 45%,100% { transform:translateX(120%); } }
                     @keyframes nfgSpin { to { transform:rotate(360deg); } }
@@ -184,13 +188,14 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                             <div class="nfg-sub">Secure access</div>
                             <div class="nfg-title">Nexus Free Bot</div>
                         </div>
-                        <button class="nfg-tg" id="nfgTelegram" title="Open Telegram"></button>
+                        <button class="nfg-tg" id="nfgTelegram" title="Open Telegram"><img src="${TELEGRAM_ICON}" alt=""></button>
                     </div>
                     <label class="nfg-label" for="nfgKey">License key</label>
                     <input class="nfg-input" id="nfgKey" placeholder="Enter your license key" value="${escapeAttr(saved)}" autocomplete="off">
                     <button class="nfg-btn" id="nfgUnlock">UNLOCK BOT</button>
                     <div class="nfg-loader"></div>
                     <div class="nfg-status" id="nfgStatus">${escapeHtml(message || 'Enter your key to continue.')}</div>
+                    <div class="nfg-mini">VIP ACCESS PANEL</div>
                 </div>
             `;
             document.documentElement.appendChild(uiRoot);
@@ -239,6 +244,37 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             if (old) old.remove();
         } catch(e) {}
         uiRoot = null;
+    }
+
+    function injectTelegramButton() {
+        const apply = () => {
+            try {
+                if (document.getElementById('nexusBotTelegramBtn')) return true;
+                const settingsBtn = document.getElementById('mbSettingsBtn');
+                if (!settingsBtn || !settingsBtn.parentElement) return false;
+                const btn = document.createElement('button');
+                btn.id = 'nexusBotTelegramBtn';
+                btn.className = settingsBtn.className || 'mb-icon-btn';
+                btn.title = 'Telegram';
+                btn.style.cssText = 'width:24px;height:24px;display:inline-grid;place-items:center;background:transparent;border:0;cursor:pointer;padding:0;margin-right:8px;vertical-align:middle;';
+                btn.innerHTML = '<img src="' + TELEGRAM_ICON + '" alt="" style="width:21px;height:21px;display:block;">';
+                btn.onclick = (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    window.open(TELEGRAM_URL, '_blank', 'noopener,noreferrer');
+                };
+                settingsBtn.parentElement.insertBefore(btn, settingsBtn);
+                return true;
+            } catch(e) {
+                return false;
+            }
+        };
+        if (apply()) return;
+        let tries = 0;
+        const timer = setInterval(() => {
+            tries++;
+            if (apply() || tries > 30) clearInterval(timer);
+        }, 500);
     }
 
     function escapeHtml(value) {
@@ -320,12 +356,14 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             botHash: loadedBotHash
         };
         (0, eval)(code);
+        injectTelegramButton();
     }
 
     async function unlockWithKey(key) {
         setGateLoading(true, 'Checking your license...');
         const auth = await authenticate(key);
         if (!auth || !auth.success) {
+            if (!uiRoot) showGate((auth && auth.error) || 'License check failed.');
             setGateLoading(false, (auth && auth.error) || 'License check failed.');
             setGateStatus((auth && auth.error) || 'License check failed.', true);
             return;
@@ -334,6 +372,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         try {
             await fetchAndRunBot();
         } catch(err) {
+            if (!uiRoot) showGate(err && err.message ? err.message : 'Bot could not be loaded.');
             setGateLoading(false, err && err.message ? err.message : 'Bot could not be loaded.');
             setGateStatus(err && err.message ? err.message : 'Bot could not be loaded.', true);
             return;
@@ -345,6 +384,11 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     }
 
     function boot() {
+        const savedKey = getSavedLicenseKey();
+        if (savedKey) {
+            unlockWithKey(savedKey);
+            return;
+        }
         showGate();
     }
 
