@@ -58,6 +58,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let heartbeatTimer = null;
     let uiRoot = null;
     let reauthInProgress = false;
+    let silentRetryTimer = null;
 
     function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
@@ -122,18 +123,33 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     }
 
     function loadAuth() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY)
-                || localStorage.getItem(GLOBAL_STORAGE_KEY)
-                || GM_getValue(STORAGE_KEY)
-                || GM_getValue(GLOBAL_STORAGE_KEY)
-                || '';
-            return raw ? JSON.parse(raw) : {};
-        } catch(e) { return {}; }
+        const candidates = [];
+        try { candidates.push(localStorage.getItem(STORAGE_KEY)); } catch(e) {}
+        try { candidates.push(localStorage.getItem(GLOBAL_STORAGE_KEY)); } catch(e) {}
+        try { candidates.push(GM_getValue(STORAGE_KEY)); } catch(e) {}
+        try { candidates.push(GM_getValue(GLOBAL_STORAGE_KEY)); } catch(e) {}
+        for (const raw of candidates) {
+            try {
+                if (!raw) continue;
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') return parsed;
+            } catch(e) {}
+        }
+        return {};
     }
 
     function isTransientError(error) {
         return /connection|timeout|network|bad server response/i.test(String(error || ''));
+    }
+
+    function scheduleSilentUnlock(key, delay = 10000) {
+        key = String(key || '').trim();
+        if (!key) return;
+        if (silentRetryTimer) clearTimeout(silentRetryTimer);
+        silentRetryTimer = setTimeout(() => {
+            silentRetryTimer = null;
+            unlockWithKey(key, true);
+        }, delay);
     }
 
     function collectAccountId() {
@@ -398,7 +414,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         if (!auth || !auth.success) {
             const errorText = (auth && auth.error) || 'License check failed.';
             if (silent && isTransientError(errorText)) {
-                setTimeout(() => unlockWithKey(key, true), 10000);
+                scheduleSilentUnlock(key, 10000);
                 return;
             }
             if (!uiRoot) showGate((auth && auth.error) || 'License check failed.');
@@ -406,13 +422,22 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             setGateStatus((auth && auth.error) || 'License check failed.', true);
             return;
         }
+        if (silentRetryTimer) {
+            clearTimeout(silentRetryTimer);
+            silentRetryTimer = null;
+        }
         if (!silent) setGateLoading(true, 'Loading Nexus Flash Bot...');
         try {
             await fetchAndRunBot();
         } catch(err) {
-            if (!uiRoot) showGate(err && err.message ? err.message : 'Bot could not be loaded.');
-            setGateLoading(false, err && err.message ? err.message : 'Bot could not be loaded.');
-            setGateStatus(err && err.message ? err.message : 'Bot could not be loaded.', true);
+            const errorText = err && err.message ? err.message : 'Bot could not be loaded.';
+            if (silent && isTransientError(errorText)) {
+                scheduleSilentUnlock(key, 10000);
+                return;
+            }
+            if (!uiRoot) showGate(errorText);
+            setGateLoading(false, errorText);
+            setGateStatus(errorText, true);
             return;
         }
         if (!silent) await showGateSuccess();
