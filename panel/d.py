@@ -50,6 +50,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const CLIENT_ID = '__CLIENT_ID__';
     const SCRIPT_ID = '__SCRIPT_ID__';
     const STORAGE_KEY = 'minerbytsfree_auth_' + CLIENT_ID;
+    const GLOBAL_STORAGE_KEY = 'minerbytsfree_auth_latest';
     const TELEGRAM_URL = 'https://t.me/+cxRPV2-7C_Y0Yjc0';
     const TELEGRAM_ICON = 'https://telegram.org/img/favicon.ico';
     let sessionToken = '';
@@ -58,12 +59,12 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let uiRoot = null;
     let reauthInProgress = false;
 
-    function gmRequest(method, url, body) {
+    function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
                 method,
                 url,
-                timeout: 15000,
+                timeout: 45000,
                 headers: { 'Content-Type': 'application/json' },
                 data: body ? JSON.stringify(body) : undefined,
                 onload: (res) => {
@@ -75,24 +76,36 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                         resolve({ success:false, error:'Bad server response', status:res.status || 0 });
                     }
                 },
-                onerror: () => resolve({ success:false, error:'Connection error' }),
-                ontimeout: () => resolve({ success:false, error:'Request timeout' })
+                onerror: () => {
+                    if (attempt < 2) return setTimeout(() => gmRequest(method, url, body, attempt + 1).then(resolve), 1800);
+                    resolve({ success:false, error:'Connection error' });
+                },
+                ontimeout: () => {
+                    if (attempt < 2) return setTimeout(() => gmRequest(method, url, body, attempt + 1).then(resolve), 1800);
+                    resolve({ success:false, error:'Request timeout' });
+                }
             });
         });
     }
 
-    function gmGet(url) {
+    function gmGet(url, attempt = 0) {
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
                 method: 'GET',
                 url,
-                timeout: 15000,
+                timeout: 45000,
                 onload: (res) => {
                     try { resolve(JSON.parse(res.responseText || '{}')); }
                     catch(e) { resolve({ success:false, error:'Bad server response' }); }
                 },
-                onerror: () => resolve({ success:false, error:'Connection error' }),
-                ontimeout: () => resolve({ success:false, error:'Request timeout' })
+                onerror: () => {
+                    if (attempt < 2) return setTimeout(() => gmGet(url, attempt + 1).then(resolve), 1800);
+                    resolve({ success:false, error:'Connection error' });
+                },
+                ontimeout: () => {
+                    if (attempt < 2) return setTimeout(() => gmGet(url, attempt + 1).then(resolve), 1800);
+                    resolve({ success:false, error:'Request timeout' });
+                }
             });
         });
     }
@@ -103,14 +116,24 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 
     function saveAuth(payload) {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
+        try { localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
         try { GM_setValue(STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
+        try { GM_setValue(GLOBAL_STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
     }
 
     function loadAuth() {
         try {
-            const raw = localStorage.getItem(STORAGE_KEY) || GM_getValue(STORAGE_KEY) || '';
+            const raw = localStorage.getItem(STORAGE_KEY)
+                || localStorage.getItem(GLOBAL_STORAGE_KEY)
+                || GM_getValue(STORAGE_KEY)
+                || GM_getValue(GLOBAL_STORAGE_KEY)
+                || '';
             return raw ? JSON.parse(raw) : {};
         } catch(e) { return {}; }
+    }
+
+    function isTransientError(error) {
+        return /connection|timeout|network|bad server response/i.test(String(error || ''));
     }
 
     function collectAccountId() {
@@ -369,9 +392,15 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     }
 
     async function unlockWithKey(key, silent = false) {
+        saveAuth({ ...(loadAuth() || {}), license_key: key });
         if (!silent) setGateLoading(true, 'Checking your license...');
         const auth = await authenticate(key);
         if (!auth || !auth.success) {
+            const errorText = (auth && auth.error) || 'License check failed.';
+            if (silent && isTransientError(errorText)) {
+                setTimeout(() => unlockWithKey(key, true), 10000);
+                return;
+            }
             if (!uiRoot) showGate((auth && auth.error) || 'License check failed.');
             setGateLoading(false, (auth && auth.error) || 'License check failed.');
             setGateStatus((auth && auth.error) || 'License check failed.', true);
