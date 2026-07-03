@@ -56,6 +56,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let loadedBotHash = '';
     let heartbeatTimer = null;
     let uiRoot = null;
+    let reauthInProgress = false;
 
     function gmRequest(method, url, body) {
         return new Promise((resolve) => {
@@ -330,9 +331,16 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             page: location.href
         });
         if (!res || !res.success) {
-            showGate((res && res.error) || 'Session expired. Please unlock again.');
             sessionToken = '';
             if (heartbeatTimer) clearInterval(heartbeatTimer);
+            const savedKey = getSavedLicenseKey();
+            if (savedKey && !reauthInProgress) {
+                reauthInProgress = true;
+                try { await unlockWithKey(savedKey, true); }
+                finally { reauthInProgress = false; }
+                return;
+            }
+            showGate((res && res.error) || 'Session expired. Please unlock again.');
         }
     }
 
@@ -360,8 +368,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         injectTelegramButton();
     }
 
-    async function unlockWithKey(key) {
-        setGateLoading(true, 'Checking your license...');
+    async function unlockWithKey(key, silent = false) {
+        if (!silent) setGateLoading(true, 'Checking your license...');
         const auth = await authenticate(key);
         if (!auth || !auth.success) {
             if (!uiRoot) showGate((auth && auth.error) || 'License check failed.');
@@ -369,7 +377,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             setGateStatus((auth && auth.error) || 'License check failed.', true);
             return;
         }
-        setGateLoading(true, 'Loading Nexus Flash Bot...');
+        if (!silent) setGateLoading(true, 'Loading Nexus Flash Bot...');
         try {
             await fetchAndRunBot();
         } catch(err) {
@@ -378,7 +386,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             setGateStatus(err && err.message ? err.message : 'Bot could not be loaded.', true);
             return;
         }
-        await showGateSuccess();
+        if (!silent) await showGateSuccess();
         removeGate();
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         heartbeatTimer = setInterval(heartbeat, 30000);
@@ -387,7 +395,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     function boot() {
         const savedKey = getSavedLicenseKey();
         if (savedKey) {
-            unlockWithKey(savedKey);
+            unlockWithKey(savedKey, true);
             return;
         }
         showGate();
