@@ -7,4 +7,8 @@ server/.env
 panel/panel_settings.json
 panel/generated_scripts_index.json
 panel/generated_scripts/*.user.js
-
+panel/flash_panel_settings.json
+panel/generated_flash_scripts_index.json
+panel/generated_flash_scripts/*.user.js
+BOT2.txt
+BOT2.data.backup.txt

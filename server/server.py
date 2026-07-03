@@ -18,6 +18,8 @@ import config
 
 APP_STATE_KEY = "minerbytsfree_runtime"
 BOT_BUNDLE_KEY = "minerbytsfree_bot_bundle"
+FLASH_BOT_BUNDLE_KEY = "flashminers_bot_bundle"
+FLASH_APP_KEY = "flashminers"
 
 app = FastAPI(title=config.APP_NAME)
 app.add_middleware(
@@ -38,6 +40,11 @@ RUNTIME_STATE: dict[str, Any] = {
     "licenses": [],
     "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
     "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
+    FLASH_APP_KEY: {
+        "licenses": [],
+        "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
+        "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
+    },
 }
 
 
@@ -80,6 +87,17 @@ def startup_event() -> None:
     load_state()
     load_bot_bundle()
     ensure_shapes()
+
+
+def app_state(app_key: str = "minerbyts") -> dict[str, Any]:
+    ensure_shapes()
+    if app_key == FLASH_APP_KEY:
+        return RUNTIME_STATE[FLASH_APP_KEY]
+    return RUNTIME_STATE
+
+
+def app_label(app_key: str = "minerbyts") -> str:
+    return "flashminers" if app_key == FLASH_APP_KEY else "minerbyts"
 
 
 @app.get("/")
@@ -282,46 +300,282 @@ def admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Head
     return {"success": True, "bot": summarize_bot_bundle()}
 
 
+@app.get("/flash/health")
+def flash_health() -> dict[str, Any]:
+    ensure_shapes()
+    state = app_state(FLASH_APP_KEY)
+    bundle = state.get("bot_bundle") or {}
+    return {
+        "success": True,
+        "project": "flashminers",
+        "status": RUNTIME_STATE.get("status", "unknown"),
+        "time": utc_now(),
+        "supabase": bool(SUPABASE),
+        "license_count": len(state.get("licenses") or []),
+        "bot_uploaded": bool(bundle.get("content")),
+        "bot_hash": bundle.get("hash", ""),
+        "last_sync": RUNTIME_STATE.get("last_sync", ""),
+        "storage_error": RUNTIME_STATE.get("storage_error", ""),
+    }
+
+
+@app.post("/flash/api/auth")
+def flash_api_auth(payload: AuthPayload) -> dict[str, Any]:
+    return api_auth_for_app(payload, FLASH_APP_KEY)
+
+
+@app.post("/flash/api/heartbeat")
+def flash_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
+    return api_heartbeat_for_app(payload, FLASH_APP_KEY)
+
+
+@app.get("/flash/api/bot/bundle")
+def flash_api_bot_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
+    return api_bot_bundle_for_app(token, client_id, script_id, account_id, FLASH_APP_KEY)
+
+
+@app.get("/flash/admin/state")
+def flash_admin_state(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    ensure_shapes()
+    return {"success": True, "state": app_state(FLASH_APP_KEY)}
+
+
+@app.get("/flash/admin/licenses")
+def flash_admin_licenses(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    ensure_shapes()
+    mark_stale_offline()
+    return {"success": True, "licenses": [sanitize_license(x) for x in app_state(FLASH_APP_KEY).get("licenses", [])]}
+
+
+@app.post("/flash/admin/license/create")
+def flash_admin_license_create(payload: LicenseCreatePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_create_for_app(payload, x_admin_token, FLASH_APP_KEY)
+
+
+@app.post("/flash/admin/license/toggle")
+def flash_admin_license_toggle(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_toggle_for_app(payload, x_admin_token, FLASH_APP_KEY)
+
+
+@app.post("/flash/admin/license/key")
+def flash_admin_license_key(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_key_for_app(payload, x_admin_token, FLASH_APP_KEY)
+
+
+@app.post("/flash/admin/license/delete")
+def flash_admin_license_delete(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_delete_for_app(payload, x_admin_token, FLASH_APP_KEY)
+
+
+@app.post("/flash/admin/bot/upload")
+def flash_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_bot_upload_for_app(payload, x_admin_token, FLASH_APP_KEY)
+
+
+def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
+    ensure_shapes()
+    state = app_state(app_key)
+    lic = find_license_by_key(payload.license_key, app_key)
+    if not lic:
+        return {"success": False, "error": "Lisans bulunamadi"}
+    if not lic.get("active", True):
+        return {"success": False, "error": "Lisans pasif"}
+    client_error = validate_client_binding(lic, payload.client_id, payload.script_id)
+    if client_error:
+        return {"success": False, "error": client_error}
+    account_error = validate_account_binding(lic, payload.account_id)
+    if account_error:
+        return {"success": False, "error": account_error}
+    token = secrets.token_urlsafe(32)
+    lic["session_token"] = token
+    lic["online"] = True
+    lic["last_seen_at"] = utc_now()
+    lic["last_page"] = payload.page or ""
+    lic["last_user_agent"] = payload.user_agent or ""
+    save_state(force=True)
+    return {
+        "success": True,
+        "token": token,
+        "license": sanitize_license(lic),
+        "settings": state.get("settings", {}),
+        "bot": summarize_bot_bundle(app_key),
+    }
+
+
+def api_heartbeat_for_app(payload: HeartbeatPayload, app_key: str) -> dict[str, Any]:
+    lic = find_license_by_session(payload.token, app_key)
+    if not lic:
+        return {"success": False, "error": "Oturum gecersiz"}
+    binding_error = validate_runtime_binding(lic, payload.client_id, payload.script_id, payload.account_id)
+    if binding_error:
+        return {"success": False, "error": binding_error}
+    lic["online"] = True
+    lic["last_seen_at"] = utc_now()
+    lic["last_page"] = payload.page or ""
+    save_state(force=False)
+    return {"success": True, "server_time": utc_now(), "settings": app_state(app_key).get("settings", {})}
+
+
+def api_bot_bundle_for_app(token: str, client_id: str, script_id: str | None, account_id: str | None, app_key: str) -> dict[str, Any]:
+    lic = find_license_by_session(token, app_key)
+    if not lic:
+        return {"success": False, "error": "Oturum gecersiz"}
+    binding_error = validate_runtime_binding(lic, client_id, script_id, account_id)
+    if binding_error:
+        return {"success": False, "error": binding_error}
+    bundle = app_state(app_key).get("bot_bundle") or {}
+    content = str(bundle.get("content") or "")
+    if not content:
+        return {"success": False, "error": "Bot henuz yuklenmedi"}
+    lic["last_seen_at"] = utc_now()
+    save_state(force=False)
+    return {
+        "success": True,
+        "name": bundle.get("name") or ("BOT2.txt" if app_key == FLASH_APP_KEY else "botfree.txt"),
+        "version": bundle.get("version") or 0,
+        "hash": bundle.get("hash") or "",
+        "encoding": "xor-base64",
+        "encrypted": encrypt_for_client(content, client_id),
+    }
+
+
+def admin_license_create_for_app(payload: LicenseCreatePayload, x_admin_token: str | None, app_key: str) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    ensure_shapes()
+    state = app_state(app_key)
+    key = (payload.key or "").strip() or generate_license_key(app_key)
+    if find_license_by_key(key, app_key):
+        return {"success": False, "error": "Bu key zaten var"}
+    now = utc_now()
+    lic = {
+        "id": secrets.token_hex(8),
+        "name": (payload.name or "User").strip(),
+        "key": key,
+        "active": bool(payload.active),
+        "multi_account": bool(payload.multi_account),
+        "account_id": "",
+        "client_id": "",
+        "script_id": "",
+        "allowed_client_id": (payload.allowed_client_id or "").strip(),
+        "session_token": "",
+        "online": False,
+        "created_at": now,
+        "last_seen_at": "",
+        "last_page": "",
+    }
+    state["licenses"].insert(0, lic)
+    save_state(force=True)
+    return {"success": True, "license": sanitize_license(lic)}
+
+
+def admin_license_toggle_for_app(payload: dict[str, Any], x_admin_token: str | None, app_key: str) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    lic = find_license_by_id(str(payload.get("license_id") or ""), app_key)
+    if not lic:
+        return {"success": False, "error": "Lisans bulunamadi"}
+    if "active" in payload:
+        lic["active"] = bool(payload.get("active"))
+    if "multi_account" in payload:
+        lic["multi_account"] = bool(payload.get("multi_account"))
+    if payload.get("reset_account"):
+        lic["account_id"] = ""
+    save_state(force=True)
+    return {"success": True, "license": sanitize_license(lic)}
+
+
+def admin_license_key_for_app(payload: dict[str, Any], x_admin_token: str | None, app_key: str) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    lic = find_license_by_id(str(payload.get("license_id") or ""), app_key)
+    new_key = str(payload.get("key") or "").strip()
+    if not lic:
+        return {"success": False, "error": "Lisans bulunamadi"}
+    if not new_key:
+        return {"success": False, "error": "Key bos olamaz"}
+    other = find_license_by_key(new_key, app_key)
+    if other and other.get("id") != lic.get("id"):
+        return {"success": False, "error": "Bu key baska lisansta var"}
+    lic["key"] = new_key
+    save_state(force=True)
+    return {"success": True, "license": sanitize_license(lic)}
+
+
+def admin_license_delete_for_app(payload: dict[str, Any], x_admin_token: str | None, app_key: str) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    state = app_state(app_key)
+    license_id = str(payload.get("license_id") or "")
+    before = len(state.get("licenses") or [])
+    state["licenses"] = [x for x in state.get("licenses", []) if x.get("id") != license_id]
+    save_state(force=True)
+    return {"success": True, "deleted": before - len(state["licenses"])}
+
+
+def admin_bot_upload_for_app(payload: BotUploadPayload, x_admin_token: str | None, app_key: str) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    state = app_state(app_key)
+    content = str(payload.content or "")
+    if not content.strip():
+        return {"success": False, "error": "Bot icerigi bos"}
+    old = state.get("bot_bundle") or {}
+    bundle = {
+        "name": payload.file_name or ("BOT2.txt" if app_key == FLASH_APP_KEY else "botfree.txt"),
+        "content": content,
+        "hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "version": int(old.get("version") or 0) + 1,
+        "updated_at": utc_now(),
+    }
+    state["bot_bundle"] = bundle
+    save_bot_bundle(force=True, app_key=app_key)
+    save_state(force=True)
+    return {"success": True, "bot": summarize_bot_bundle(app_key)}
+
+
 def ensure_shapes() -> None:
     RUNTIME_STATE.setdefault("licenses", [])
     RUNTIME_STATE.setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
     RUNTIME_STATE.setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
-    for lic in RUNTIME_STATE.get("licenses") or []:
-        if not isinstance(lic, dict):
-            continue
-        lic.setdefault("multi_account", False)
-        lic.setdefault("account_id", "")
-        lic.setdefault("client_id", "")
-        lic.setdefault("script_id", "")
-        lic.setdefault("allowed_client_id", "")
-        lic.setdefault("online", False)
+    RUNTIME_STATE.setdefault(FLASH_APP_KEY, {})
+    RUNTIME_STATE[FLASH_APP_KEY].setdefault("licenses", [])
+    RUNTIME_STATE[FLASH_APP_KEY].setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
+    RUNTIME_STATE[FLASH_APP_KEY].setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
+    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY]):
+        for lic in state.get("licenses") or []:
+            if not isinstance(lic, dict):
+                continue
+            lic.setdefault("multi_account", False)
+            lic.setdefault("account_id", "")
+            lic.setdefault("client_id", "")
+            lic.setdefault("script_id", "")
+            lic.setdefault("allowed_client_id", "")
+            lic.setdefault("online", False)
 
 
-def find_license_by_key(key: str | None) -> dict[str, Any] | None:
+def find_license_by_key(key: str | None, app_key: str = "minerbyts") -> dict[str, Any] | None:
     wanted = str(key or "").strip()
     if not wanted:
         return None
-    for item in RUNTIME_STATE.get("licenses") or []:
+    for item in app_state(app_key).get("licenses") or []:
         if isinstance(item, dict) and str(item.get("key") or "").strip() == wanted:
             return item
     return None
 
 
-def find_license_by_session(token: str | None) -> dict[str, Any] | None:
+def find_license_by_session(token: str | None, app_key: str = "minerbyts") -> dict[str, Any] | None:
     wanted = str(token or "").strip()
     if not wanted:
         return None
-    for item in RUNTIME_STATE.get("licenses") or []:
+    for item in app_state(app_key).get("licenses") or []:
         if isinstance(item, dict) and str(item.get("session_token") or "").strip() == wanted:
             return item
     return None
 
 
-def find_license_by_id(license_id: str | None) -> dict[str, Any] | None:
+def find_license_by_id(license_id: str | None, app_key: str = "minerbyts") -> dict[str, Any] | None:
     wanted = str(license_id or "").strip()
     if not wanted:
         return None
-    for item in RUNTIME_STATE.get("licenses") or []:
+    for item in app_state(app_key).get("licenses") or []:
         if isinstance(item, dict) and str(item.get("id") or "").strip() == wanted:
             return item
     return None
@@ -387,8 +641,8 @@ def sanitize_license(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def summarize_bot_bundle() -> dict[str, Any]:
-    bundle = RUNTIME_STATE.get("bot_bundle") or {}
+def summarize_bot_bundle(app_key: str = "minerbyts") -> dict[str, Any]:
+    bundle = app_state(app_key).get("bot_bundle") or {}
     return {
         "name": bundle.get("name", ""),
         "hash": bundle.get("hash", ""),
@@ -398,8 +652,9 @@ def summarize_bot_bundle() -> dict[str, Any]:
     }
 
 
-def generate_license_key() -> str:
-    return "MBF-" + "-".join(secrets.token_hex(2).upper() for _ in range(4))
+def generate_license_key(app_key: str = "minerbyts") -> str:
+    prefix = "FMF" if app_key == FLASH_APP_KEY else "MBF"
+    return prefix + "-" + "-".join(secrets.token_hex(2).upper() for _ in range(4))
 
 
 def encrypt_for_client(text: str, client_id: str) -> str:
@@ -447,6 +702,10 @@ def load_bot_bundle() -> None:
         rows = result.data or []
         if rows and isinstance(rows[0].get("value"), dict):
             RUNTIME_STATE["bot_bundle"] = rows[0]["value"]
+        result = SUPABASE.table("app_state").select("value").eq("key", FLASH_BOT_BUNDLE_KEY).limit(1).execute()
+        rows = result.data or []
+        if rows and isinstance(rows[0].get("value"), dict):
+            RUNTIME_STATE[FLASH_APP_KEY]["bot_bundle"] = rows[0]["value"]
         RUNTIME_STATE.pop("bot_storage_error", None)
     except Exception as exc:
         RUNTIME_STATE["bot_storage_error"] = str(exc)
@@ -464,13 +723,21 @@ def save_state(force: bool = False) -> None:
     bot = dict(payload.get("bot_bundle") or {})
     bot.pop("content", None)
     payload["bot_bundle"] = bot
+    flash_state = dict(payload.get(FLASH_APP_KEY) or {})
+    flash_bot = dict(flash_state.get("bot_bundle") or {})
+    flash_bot.pop("content", None)
+    flash_state["bot_bundle"] = flash_bot
+    payload[FLASH_APP_KEY] = flash_state
     save_app_state(APP_STATE_KEY, payload, "storage_error")
 
 
-def save_bot_bundle(force: bool = False) -> None:
+def save_bot_bundle(force: bool = False, app_key: str = "minerbyts") -> None:
     if not SUPABASE:
         return
-    save_app_state(BOT_BUNDLE_KEY, RUNTIME_STATE.get("bot_bundle") or {}, "bot_storage_error")
+    if app_key == FLASH_APP_KEY:
+        save_app_state(FLASH_BOT_BUNDLE_KEY, RUNTIME_STATE[FLASH_APP_KEY].get("bot_bundle") or {}, "flash_bot_storage_error")
+    else:
+        save_app_state(BOT_BUNDLE_KEY, RUNTIME_STATE.get("bot_bundle") or {}, "bot_storage_error")
 
 
 def save_app_state(key: str, value: dict[str, Any], error_key: str) -> None:
@@ -487,11 +754,12 @@ def save_app_state(key: str, value: dict[str, Any], error_key: str) -> None:
 def mark_stale_offline() -> None:
     now = time.time()
     changed = False
-    for lic in RUNTIME_STATE.get("licenses") or []:
-        seen = parse_time(lic.get("last_seen_at"))
-        if lic.get("online") and seen and now - seen > 120:
-            lic["online"] = False
-            changed = True
+    for state in (RUNTIME_STATE, RUNTIME_STATE.get(FLASH_APP_KEY) or {}):
+        for lic in state.get("licenses") or []:
+            seen = parse_time(lic.get("last_seen_at"))
+            if lic.get("online") and seen and now - seen > 120:
+                lic["online"] = False
+                changed = True
     if changed:
         save_state(force=False)
 
