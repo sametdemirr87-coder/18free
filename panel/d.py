@@ -153,23 +153,6 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     }
 
     function collectAccountId() {
-        const candidates = [];
-        const push = (value) => {
-            value = String(value || '').trim();
-            if (value && !candidates.includes(value)) candidates.push(value);
-        };
-        try {
-            ['user_id', 'userId', 'account_id', 'accountId', 'minerbyts_user'].forEach((key) => {
-                push(localStorage.getItem(key));
-                push(sessionStorage.getItem(key));
-            });
-        } catch(e) {}
-        try {
-            const text = document.body ? document.body.innerText : '';
-            const match = String(text || '').match(/(?:User|ID|Account)\s*#?\s*:?\s*([A-Za-z0-9_.@-]{4,80})/i);
-            if (match) push(match[1]);
-        } catch(e) {}
-        if (candidates[0]) return candidates[0];
         try {
             let fp = localStorage.getItem('minerbytsfree_device_id') || '';
             if (!fp) {

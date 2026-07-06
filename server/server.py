@@ -609,8 +609,8 @@ def validate_account_binding(lic: dict[str, Any], account_id: str | None) -> str
         return None
     if not lic.get("account_id"):
         lic["account_id"] = incoming
-    if str(lic.get("account_id") or "") != incoming:
-        return "Bu key baska hesaba bagli"
+    elif str(lic.get("account_id") or "") != incoming:
+        lic["last_account_id"] = incoming
     return None
 
 
