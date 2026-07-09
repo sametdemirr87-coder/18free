@@ -78,6 +78,18 @@ class HeartbeatPayload(BaseModel):
     page: str | None = None
 
 
+class TamperPayload(BaseModel):
+    token: str | None = None
+    license_key: str | None = None
+    client_id: str | None = None
+    script_id: str | None = None
+    account_id: str | None = None
+    reason: str = "f12"
+    source: str = "client"
+    page: str | None = None
+    user_agent: str | None = None
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     global SUPABASE
@@ -128,6 +140,8 @@ def api_auth(payload: AuthPayload) -> dict[str, Any]:
     lic = find_license_by_key(payload.license_key)
     if not lic:
         return {"success": False, "error": "Lisans bulunamadi"}
+    if lic.get("tamper_detected"):
+        return {"success": False, "error": "F12 security lock. Contact Nexus."}
     if not lic.get("active", True):
         return {"success": False, "error": "Lisans pasif"}
 
@@ -160,6 +174,8 @@ def api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
     lic = find_license_by_session(payload.token)
     if not lic:
         return {"success": False, "error": "Oturum gecersiz"}
+    if lic.get("tamper_detected"):
+        return {"success": False, "error": "F12 security lock. Contact Nexus."}
     binding_error = validate_runtime_binding(lic, payload.client_id, payload.script_id, payload.account_id)
     if binding_error:
         return {"success": False, "error": binding_error}
@@ -170,11 +186,18 @@ def api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
     return {"success": True, "server_time": utc_now(), "settings": RUNTIME_STATE.get("settings", {})}
 
 
+@app.post("/api/tamper/report")
+def api_tamper_report(payload: TamperPayload) -> dict[str, Any]:
+    return api_tamper_report_for_app(payload, "minerbyts")
+
+
 @app.get("/api/bot/bundle")
 def api_bot_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
     lic = find_license_by_session(token)
     if not lic:
         return {"success": False, "error": "Oturum gecersiz"}
+    if lic.get("tamper_detected"):
+        return {"success": False, "error": "F12 security lock. Contact Nexus."}
     binding_error = validate_runtime_binding(lic, client_id, script_id, account_id)
     if binding_error:
         return {"success": False, "error": binding_error}
@@ -232,6 +255,10 @@ def admin_license_create(payload: LicenseCreatePayload, x_admin_token: str | Non
         "created_at": now,
         "last_seen_at": "",
         "last_page": "",
+        "tamper_detected": False,
+        "tamper_reason": "",
+        "tamper_at": "",
+        "tamper_report": {},
     }
     RUNTIME_STATE["licenses"].insert(0, lic)
     save_state(force=True)
@@ -245,6 +272,8 @@ def admin_license_toggle(payload: dict[str, Any], x_admin_token: str | None = He
     if not lic:
         return {"success": False, "error": "Lisans bulunamadi"}
     if "active" in payload:
+        if bool(payload.get("active")) and lic.get("tamper_detected"):
+            return {"success": False, "error": "F12 damgasi temizlenmeden aktif edilemez"}
         lic["active"] = bool(payload.get("active"))
     if "multi_account" in payload:
         lic["multi_account"] = bool(payload.get("multi_account"))
@@ -279,6 +308,11 @@ def admin_license_delete(payload: dict[str, Any], x_admin_token: str | None = He
     RUNTIME_STATE["licenses"] = [x for x in RUNTIME_STATE.get("licenses", []) if x.get("id") != license_id]
     save_state(force=True)
     return {"success": True, "deleted": before - len(RUNTIME_STATE["licenses"])}
+
+
+@app.post("/admin/license/tamper-clear")
+def admin_license_tamper_clear(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_tamper_clear_for_app(payload, x_admin_token, "minerbyts")
 
 
 @app.post("/admin/bot/upload")
@@ -329,6 +363,11 @@ def flash_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
     return api_heartbeat_for_app(payload, FLASH_APP_KEY)
 
 
+@app.post("/flash/api/tamper/report")
+def flash_api_tamper_report(payload: TamperPayload) -> dict[str, Any]:
+    return api_tamper_report_for_app(payload, FLASH_APP_KEY)
+
+
 @app.get("/flash/api/bot/bundle")
 def flash_api_bot_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
     return api_bot_bundle_for_app(token, client_id, script_id, account_id, FLASH_APP_KEY)
@@ -369,6 +408,11 @@ def flash_admin_license_delete(payload: dict[str, Any], x_admin_token: str | Non
     return admin_license_delete_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
 
+@app.post("/flash/admin/license/tamper-clear")
+def flash_admin_license_tamper_clear(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_tamper_clear_for_app(payload, x_admin_token, FLASH_APP_KEY)
+
+
 @app.post("/flash/admin/bot/upload")
 def flash_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     return admin_bot_upload_for_app(payload, x_admin_token, FLASH_APP_KEY)
@@ -380,6 +424,8 @@ def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
     lic = find_license_by_key(payload.license_key, app_key)
     if not lic:
         return {"success": False, "error": "Lisans bulunamadi"}
+    if lic.get("tamper_detected"):
+        return {"success": False, "error": "F12 security lock. Contact Nexus."}
     if not lic.get("active", True):
         return {"success": False, "error": "Lisans pasif"}
     client_error = validate_client_binding(lic, payload.client_id, payload.script_id)
@@ -408,6 +454,8 @@ def api_heartbeat_for_app(payload: HeartbeatPayload, app_key: str) -> dict[str, 
     lic = find_license_by_session(payload.token, app_key)
     if not lic:
         return {"success": False, "error": "Oturum gecersiz"}
+    if lic.get("tamper_detected"):
+        return {"success": False, "error": "F12 security lock. Contact Nexus."}
     binding_error = validate_runtime_binding(lic, payload.client_id, payload.script_id, payload.account_id)
     if binding_error:
         return {"success": False, "error": binding_error}
@@ -422,6 +470,8 @@ def api_bot_bundle_for_app(token: str, client_id: str, script_id: str | None, ac
     lic = find_license_by_session(token, app_key)
     if not lic:
         return {"success": False, "error": "Oturum gecersiz"}
+    if lic.get("tamper_detected"):
+        return {"success": False, "error": "F12 security lock. Contact Nexus."}
     binding_error = validate_runtime_binding(lic, client_id, script_id, account_id)
     if binding_error:
         return {"success": False, "error": binding_error}
@@ -464,6 +514,10 @@ def admin_license_create_for_app(payload: LicenseCreatePayload, x_admin_token: s
         "created_at": now,
         "last_seen_at": "",
         "last_page": "",
+        "tamper_detected": False,
+        "tamper_reason": "",
+        "tamper_at": "",
+        "tamper_report": {},
     }
     state["licenses"].insert(0, lic)
     save_state(force=True)
@@ -476,6 +530,8 @@ def admin_license_toggle_for_app(payload: dict[str, Any], x_admin_token: str | N
     if not lic:
         return {"success": False, "error": "Lisans bulunamadi"}
     if "active" in payload:
+        if bool(payload.get("active")) and lic.get("tamper_detected"):
+            return {"success": False, "error": "F12 damgasi temizlenmeden aktif edilemez"}
         lic["active"] = bool(payload.get("active"))
     if "multi_account" in payload:
         lic["multi_account"] = bool(payload.get("multi_account"))
@@ -509,6 +565,53 @@ def admin_license_delete_for_app(payload: dict[str, Any], x_admin_token: str | N
     state["licenses"] = [x for x in state.get("licenses", []) if x.get("id") != license_id]
     save_state(force=True)
     return {"success": True, "deleted": before - len(state["licenses"])}
+
+
+def api_tamper_report_for_app(payload: TamperPayload, app_key: str) -> dict[str, Any]:
+    ensure_shapes()
+    lic = find_license_by_session(payload.token, app_key)
+    if not lic:
+        lic = find_license_by_key(payload.license_key, app_key)
+    if not lic:
+        lic = find_license_by_client_script(payload.client_id, payload.script_id, app_key)
+    if not lic:
+        return {"success": False, "error": "Lisans bulunamadi"}
+    now = utc_now()
+    report = {
+        "reason": str(payload.reason or "f12")[:80],
+        "source": str(payload.source or "client")[:80],
+        "license_key": str(payload.license_key or "")[:180],
+        "client_id": str(payload.client_id or "")[:160],
+        "script_id": str(payload.script_id or "")[:160],
+        "account_id": str(payload.account_id or "")[:160],
+        "page": str(payload.page or "")[:500],
+        "user_agent": str(payload.user_agent or "")[:500],
+        "reported_at": now,
+    }
+    lic["tamper_detected"] = True
+    lic["tamper_reason"] = report["reason"]
+    lic["tamper_at"] = now
+    lic["tamper_report"] = report
+    lic["active"] = False
+    lic["online"] = False
+    lic["session_token"] = ""
+    save_state(force=True)
+    return {"success": True, "locked": True}
+
+
+def admin_license_tamper_clear_for_app(payload: dict[str, Any], x_admin_token: str | None, app_key: str) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    lic = find_license_by_id(str(payload.get("license_id") or ""), app_key)
+    if not lic:
+        return {"success": False, "error": "Lisans bulunamadi"}
+    lic["tamper_detected"] = False
+    lic["tamper_reason"] = ""
+    lic["tamper_at"] = ""
+    lic["tamper_report"] = {}
+    lic["session_token"] = ""
+    lic["online"] = False
+    save_state(force=True)
+    return {"success": True, "license": sanitize_license(lic)}
 
 
 def admin_bot_upload_for_app(payload: BotUploadPayload, x_admin_token: str | None, app_key: str) -> dict[str, Any]:
@@ -549,6 +652,10 @@ def ensure_shapes() -> None:
             lic.setdefault("script_id", "")
             lic.setdefault("allowed_client_id", "")
             lic.setdefault("online", False)
+            lic.setdefault("tamper_detected", False)
+            lic.setdefault("tamper_reason", "")
+            lic.setdefault("tamper_at", "")
+            lic.setdefault("tamper_report", {})
 
 
 def find_license_by_key(key: str | None, app_key: str = "minerbyts") -> dict[str, Any] | None:
@@ -578,6 +685,22 @@ def find_license_by_id(license_id: str | None, app_key: str = "minerbyts") -> di
     for item in app_state(app_key).get("licenses") or []:
         if isinstance(item, dict) and str(item.get("id") or "").strip() == wanted:
             return item
+    return None
+
+
+def find_license_by_client_script(client_id: str | None, script_id: str | None, app_key: str = "minerbyts") -> dict[str, Any] | None:
+    wanted_client = str(client_id or "").strip()
+    wanted_script = str(script_id or "").strip()
+    if not wanted_client and not wanted_script:
+        return None
+    for item in app_state(app_key).get("licenses") or []:
+        if not isinstance(item, dict):
+            continue
+        if wanted_client and str(item.get("client_id") or "").strip() != wanted_client:
+            continue
+        if wanted_script and str(item.get("script_id") or "").strip() not in ("", wanted_script):
+            continue
+        return item
     return None
 
 
@@ -635,6 +758,10 @@ def sanitize_license(item: dict[str, Any]) -> dict[str, Any]:
         "script_id": item.get("script_id", ""),
         "allowed_client_id": item.get("allowed_client_id", ""),
         "online": item.get("online", False),
+        "tamper_detected": item.get("tamper_detected", False),
+        "tamper_reason": item.get("tamper_reason", ""),
+        "tamper_at": item.get("tamper_at", ""),
+        "tamper_report": item.get("tamper_report", {}),
         "created_at": item.get("created_at", ""),
         "last_seen_at": item.get("last_seen_at", ""),
         "last_page": item.get("last_page", ""),

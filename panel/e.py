@@ -59,6 +59,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let uiRoot = null;
     let reauthInProgress = false;
     let silentRetryTimer = null;
+    let f12SecurityReported = false;
 
     function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
@@ -114,6 +115,45 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     function apiUrl(path) {
         return String(SERVER_URL || '').replace(/\/$/, '') + path;
     }
+
+    function reportF12SecurityLock() {
+        if (f12SecurityReported) return;
+        f12SecurityReported = true;
+        const auth = loadAuth() || {};
+        const token = sessionToken || auth.session_token || '';
+        const licenseKey = auth.license_key || '';
+        const accountId = auth.account_id || collectAccountId();
+        if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+        }
+        const payload = {
+            token,
+            license_key: licenseKey,
+            client_id: CLIENT_ID,
+            script_id: SCRIPT_ID,
+            account_id: accountId,
+            reason: 'f12',
+            source: 'loader_keydown',
+            page: location.href,
+            user_agent: navigator.userAgent
+        };
+        try {
+            if (navigator.sendBeacon) {
+                navigator.sendBeacon(apiUrl('/flash/api/tamper/report'), new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+            }
+        } catch(e) {}
+        gmRequest('POST', apiUrl('/flash/api/tamper/report'), payload, 0).then(() => {
+            sessionToken = '';
+            showGate('F12 security lock. Contact Nexus.');
+        });
+    }
+
+    document.addEventListener('keydown', (event) => {
+        if (String(event.key || '').toLowerCase() === 'f12') {
+            reportF12SecurityLock();
+        }
+    }, true);
 
     function saveAuth(payload) {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
@@ -383,6 +423,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             clientId: CLIENT_ID,
             scriptId: SCRIPT_ID,
             sessionToken,
+            licenseKey: key,
             accountId: collectAccountId(),
             botHash: loadedBotHash
         };
@@ -526,16 +567,18 @@ class FlashMinersPanel(tk.Tk):
         tk.Label(list_head, text="Uretilen Lisanslar", bg="#0b1020", fg="#e5e7eb", font=("Segoe UI", 13, "bold")).pack(side="left")
         tk.Button(list_head, text="Lisanslari Yenile", command=self.refresh_licenses, bg="#2563eb", fg="white", relief="flat", padx=18).pack(side="right")
 
-        columns = ("name", "key", "active", "account", "online")
+        columns = ("name", "key", "active", "security", "account", "online")
         self.tree = ttk.Treeview(left, columns=columns, show="headings")
         self.tree.heading("name", text="Isim")
         self.tree.heading("key", text="Key")
         self.tree.heading("active", text="Aktif")
+        self.tree.heading("security", text="F12")
         self.tree.heading("account", text="Hesap")
         self.tree.heading("online", text="Online")
         self.tree.column("name", width=140)
         self.tree.column("key", width=210)
         self.tree.column("active", width=70, anchor="center")
+        self.tree.column("security", width=70, anchor="center")
         self.tree.column("account", width=180)
         self.tree.column("online", width=80, anchor="center")
         self.tree.pack(fill="both", expand=True)
@@ -552,6 +595,7 @@ class FlashMinersPanel(tk.Tk):
         self.tree_menu.add_command(label="Coklu Hesap Ac", command=lambda: self.toggle_selected(multi_account=True))
         self.tree_menu.add_command(label="Tek Hesap Yap", command=lambda: self.toggle_selected(multi_account=False))
         self.tree_menu.add_command(label="Hesap Bagini Sifirla", command=lambda: self.toggle_selected(reset_account=True))
+        self.tree_menu.add_command(label="F12 Damgasini Temizle", command=self.clear_selected_f12)
         self.tree_menu.add_separator()
         self.tree_menu.add_command(label="Sil", command=self.delete_selected)
 
@@ -680,6 +724,7 @@ class FlashMinersPanel(tk.Tk):
                 lic.get("name", ""),
                 lic.get("key", ""),
                 "EVET" if lic.get("active") else "HAYIR",
+                "F12" if lic.get("tamper_detected") else "-",
                 lic.get("account_id", "") or "-",
                 "EVET" if lic.get("online") else "HAYIR",
             ))
@@ -781,6 +826,20 @@ class FlashMinersPanel(tk.Tk):
             self.log_line("Lisans guncellendi")
         except Exception as exc:
             self.log_line("Lisans guncelleme hata: " + str(exc))
+            messagebox.showerror("Hata", str(exc))
+
+    def clear_selected_f12(self):
+        try:
+            lic = self.get_selected_license()
+            if not lic:
+                return
+            res = api_json("POST", self.server_url("/flash/admin/license/tamper-clear"), {"license_id": lic.get("id", "")}, self.admin_var.get().strip())
+            if not res.get("success"):
+                raise RuntimeError(res.get("error") or "F12 temizlenemedi")
+            self.refresh_licenses(silent=True)
+            self.log_line("F12 damgasi temizlendi")
+        except Exception as exc:
+            self.log_line("F12 temizleme hata: " + str(exc))
             messagebox.showerror("Hata", str(exc))
 
     def delete_selected(self):
