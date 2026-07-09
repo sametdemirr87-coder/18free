@@ -59,7 +59,6 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let uiRoot = null;
     let reauthInProgress = false;
     let silentRetryTimer = null;
-    let f12SecurityReported = false;
 
     function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
@@ -115,49 +114,6 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     function apiUrl(path) {
         return String(SERVER_URL || '').replace(/\/$/, '') + path;
     }
-
-    function reportF12SecurityLock() {
-        if (f12SecurityReported) return;
-        f12SecurityReported = true;
-        const auth = loadAuth() || {};
-        const token = sessionToken || auth.session_token || '';
-        const licenseKey = auth.license_key || '';
-        const accountId = auth.account_id || collectAccountId();
-        if (heartbeatTimer) {
-            clearInterval(heartbeatTimer);
-            heartbeatTimer = null;
-        }
-        const payload = {
-            token,
-            license_key: licenseKey,
-            client_id: CLIENT_ID,
-            script_id: SCRIPT_ID,
-            account_id: accountId,
-            reason: 'f12',
-            source: 'loader_keydown',
-            page: location.href,
-            user_agent: navigator.userAgent
-        };
-        try {
-            const qs = new URLSearchParams(payload).toString();
-            (new Image()).src = apiUrl('/flash/api/tamper/report.gif') + '?' + qs + '&_=' + Date.now();
-        } catch(e) {}
-        try {
-            if (navigator.sendBeacon) {
-                navigator.sendBeacon(apiUrl('/flash/api/tamper/report'), new Blob([JSON.stringify(payload)], { type: 'application/json' }));
-            }
-        } catch(e) {}
-        gmRequest('POST', apiUrl('/flash/api/tamper/report'), payload, 0).then(() => {
-            sessionToken = '';
-            showGate('F12 security lock. Contact Nexus.');
-        });
-    }
-
-    document.addEventListener('keydown', (event) => {
-        if (String(event.key || '').toLowerCase() === 'f12') {
-            reportF12SecurityLock();
-        }
-    }, true);
 
     function saveAuth(payload) {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
