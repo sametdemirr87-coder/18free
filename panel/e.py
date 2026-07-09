@@ -118,6 +118,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     function buildSecurityPayload(source, extra = {}) {
         const auth = loadAuth() || {};
         return {
+            ...extra,
             token: sessionToken || auth.session_token || '',
             license_key: auth.license_key || getSavedLicenseKey(),
             client_id: CLIENT_ID,
@@ -126,8 +127,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             reason: 'f12',
             source: source || 'bot_keydown',
             page: location.href,
-            user_agent: navigator.userAgent,
-            ...extra
+            user_agent: navigator.userAgent
         };
     }
 

@@ -625,6 +625,20 @@ def api_tamper_report_for_app(payload: TamperPayload, app_key: str) -> dict[str,
     if not lic:
         lic = find_license_by_client_script(payload.client_id, payload.script_id, app_key)
     if not lic:
+        lic = find_recent_online_license_for_tamper(payload, app_key)
+    if not lic:
+        app_state(app_key)["last_tamper_miss"] = {
+            "reason": str(payload.reason or "f12")[:80],
+            "source": str(payload.source or "client")[:80],
+            "license_key_present": bool(str(payload.license_key or "").strip()),
+            "client_id": str(payload.client_id or "")[:160],
+            "script_id": str(payload.script_id or "")[:160],
+            "account_id": str(payload.account_id or "")[:160],
+            "page": str(payload.page or "")[:500],
+            "user_agent": str(payload.user_agent or "")[:500],
+            "reported_at": utc_now(),
+        }
+        save_state(force=True)
         return {"success": False, "error": "Lisans bulunamadi"}
     now = utc_now()
     report = {
@@ -651,6 +665,36 @@ def api_tamper_report_for_app(payload: TamperPayload, app_key: str) -> dict[str,
     lic["session_token"] = ""
     save_state(force=True)
     return {"success": True, "locked": True}
+
+
+def find_recent_online_license_for_tamper(payload: TamperPayload, app_key: str) -> dict[str, Any] | None:
+    now_ts = datetime.now(timezone.utc).timestamp()
+    incoming_account = normalize_account_id(payload.account_id)
+    incoming_client = str(payload.client_id or "").strip()
+    candidates: list[dict[str, Any]] = []
+    for item in app_state(app_key).get("licenses") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("tamper_detected") or not item.get("active", True):
+            continue
+        if incoming_client:
+            stored_client = str(item.get("client_id") or "").strip()
+            allowed_client = str(item.get("allowed_client_id") or "").strip()
+            if incoming_client not in (stored_client, allowed_client):
+                continue
+        if incoming_account:
+            known_accounts = {
+                str(item.get("account_id") or "").strip(),
+                str(item.get("last_account_id") or "").strip(),
+            }
+            if any(known_accounts) and incoming_account not in known_accounts:
+                continue
+        seen = parse_time(item.get("last_seen_at"))
+        if item.get("online") and seen and now_ts - seen <= 240:
+            candidates.append(item)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 def admin_license_tamper_clear_for_app(payload: dict[str, Any], x_admin_token: str | None, app_key: str) -> dict[str, Any]:
