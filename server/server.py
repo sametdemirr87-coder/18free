@@ -492,7 +492,7 @@ def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
     lic["last_seen_at"] = utc_now()
     lic["last_page"] = payload.page or ""
     lic["last_user_agent"] = payload.user_agent or ""
-    save_state(force=True)
+    save_state(force=app_key != FLASH_APP_KEY)
     return {
         "success": True,
         "token": token,
@@ -532,7 +532,6 @@ def api_bot_bundle_for_app(token: str, client_id: str, script_id: str | None, ac
     if not content:
         return {"success": False, "error": "Bot henuz yuklenmedi"}
     lic["last_seen_at"] = utc_now()
-    save_state(force=False)
     return {
         "success": True,
         "name": bundle.get("name") or ("BOT2.txt" if app_key == FLASH_APP_KEY else "botfree.txt"),

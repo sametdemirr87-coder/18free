@@ -40,7 +40,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @connect      __SERVER_HOST__
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function() {
