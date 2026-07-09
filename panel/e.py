@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import tkinter as tk
+from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 from urllib import request as urlrequest
@@ -49,6 +50,16 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const CLIENT_NAME = '__CLIENT_NAME__';
     const CLIENT_ID = '__CLIENT_ID__';
     const SCRIPT_ID = '__SCRIPT_ID__';
+    const SCRIPT_IDENTITY = Object.freeze({
+        app: 'flashminers',
+        clientId: CLIENT_ID,
+        client_id: CLIENT_ID,
+        scriptId: SCRIPT_ID,
+        script_id: SCRIPT_ID,
+        serverUrl: SERVER_URL,
+        server_url: SERVER_URL,
+        createdAt: '__CREATED_AT__'
+    });
     const STORAGE_KEY = 'flashminers_auth_' + CLIENT_ID;
     const GLOBAL_STORAGE_KEY = 'flashminers_auth_latest';
     const TELEGRAM_URL = 'https://t.me/+cxRPV2-7C_Y0Yjc0';
@@ -59,6 +70,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let uiRoot = null;
     let reauthInProgress = false;
     let silentRetryTimer = null;
+    window.__MINERBYTSFREE_IDENTITY__ = SCRIPT_IDENTITY;
+    globalThis.__MINERBYTSFREE_IDENTITY__ = SCRIPT_IDENTITY;
 
     function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
@@ -429,6 +442,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         const code = decryptBot(bundle.encrypted || '');
         loadedBotHash = bundle.hash || '';
         window.__MINERBYTSFREE_CLIENT__ = {
+            ...SCRIPT_IDENTITY,
             serverUrl: SERVER_URL,
             clientId: CLIENT_ID,
             scriptId: SCRIPT_ID,
@@ -692,7 +706,8 @@ class FlashMinersPanel(tk.Tk):
                       .replace("__CLIENT_ID__", client_id)
                       .replace("__SCRIPT_ID__", script_id)
                       .replace("__SERVER_URL__", server_url)
-                      .replace("__SERVER_HOST__", host))
+                      .replace("__SERVER_HOST__", host)
+                      .replace("__CREATED_AT__", datetime.now(timezone.utc).isoformat()))
             out_path = GENERATED_DIR / f"{safe_name(user_name)}_{client_id[:8]}.user.js"
             out_path.write_text(script, encoding="utf-8")
             index = load_json(SCRIPT_INDEX_FILE, {})

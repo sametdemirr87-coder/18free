@@ -550,6 +550,9 @@ def admin_license_create_for_app(payload: LicenseCreatePayload, x_admin_token: s
     key = (payload.key or "").strip() or generate_license_key(app_key)
     if find_license_by_key(key, app_key):
         return {"success": False, "error": "Bu key zaten var"}
+    allowed_client_id = (payload.allowed_client_id or "").strip()
+    if allowed_client_id and find_license_by_client_script(allowed_client_id, None, app_key):
+        return {"success": False, "error": "Bu script kimligi zaten var"}
     now = utc_now()
     lic = {
         "id": secrets.token_hex(8),
@@ -560,7 +563,7 @@ def admin_license_create_for_app(payload: LicenseCreatePayload, x_admin_token: s
         "account_id": "",
         "client_id": "",
         "script_id": "",
-        "allowed_client_id": (payload.allowed_client_id or "").strip(),
+        "allowed_client_id": allowed_client_id,
         "session_token": "",
         "online": False,
         "created_at": now,
