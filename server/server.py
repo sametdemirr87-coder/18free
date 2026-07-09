@@ -141,7 +141,7 @@ def api_auth(payload: AuthPayload) -> dict[str, Any]:
     if not lic:
         return {"success": False, "error": "Lisans bulunamadi"}
     if lic.get("tamper_detected"):
-        return {"success": False, "error": "F12 security lock. Contact Nexus."}
+        return {"success": False, "error": "Connect Nexus."}
     if not lic.get("active", True):
         return {"success": False, "error": "Lisans pasif"}
 
@@ -175,7 +175,7 @@ def api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
     if not lic:
         return {"success": False, "error": "Oturum gecersiz"}
     if lic.get("tamper_detected"):
-        return {"success": False, "error": "F12 security lock. Contact Nexus."}
+        return {"success": False, "error": "Connect Nexus."}
     binding_error = validate_runtime_binding(lic, payload.client_id, payload.script_id, payload.account_id)
     if binding_error:
         return {"success": False, "error": binding_error}
@@ -222,7 +222,7 @@ def api_bot_bundle(token: str, client_id: str, script_id: str | None = None, acc
     if not lic:
         return {"success": False, "error": "Oturum gecersiz"}
     if lic.get("tamper_detected"):
-        return {"success": False, "error": "F12 security lock. Contact Nexus."}
+        return {"success": False, "error": "Connect Nexus."}
     binding_error = validate_runtime_binding(lic, client_id, script_id, account_id)
     if binding_error:
         return {"success": False, "error": binding_error}
@@ -477,7 +477,7 @@ def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
     if not lic:
         return {"success": False, "error": "Lisans bulunamadi"}
     if lic.get("tamper_detected"):
-        return {"success": False, "error": "F12 security lock. Contact Nexus."}
+        return {"success": False, "error": "Connect Nexus."}
     if not lic.get("active", True):
         return {"success": False, "error": "Lisans pasif"}
     client_error = validate_client_binding(lic, payload.client_id, payload.script_id)
@@ -507,7 +507,7 @@ def api_heartbeat_for_app(payload: HeartbeatPayload, app_key: str) -> dict[str, 
     if not lic:
         return {"success": False, "error": "Oturum gecersiz"}
     if lic.get("tamper_detected"):
-        return {"success": False, "error": "F12 security lock. Contact Nexus."}
+        return {"success": False, "error": "Connect Nexus."}
     binding_error = validate_runtime_binding(lic, payload.client_id, payload.script_id, payload.account_id)
     if binding_error:
         return {"success": False, "error": binding_error}
@@ -523,7 +523,7 @@ def api_bot_bundle_for_app(token: str, client_id: str, script_id: str | None, ac
     if not lic:
         return {"success": False, "error": "Oturum gecersiz"}
     if lic.get("tamper_detected"):
-        return {"success": False, "error": "F12 security lock. Contact Nexus."}
+        return {"success": False, "error": "Connect Nexus."}
     binding_error = validate_runtime_binding(lic, client_id, script_id, account_id)
     if binding_error:
         return {"success": False, "error": binding_error}
