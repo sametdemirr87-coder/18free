@@ -375,6 +375,8 @@ def flash_health() -> dict[str, Any]:
         "bot_hash": bundle.get("hash", ""),
         "last_sync": RUNTIME_STATE.get("last_sync", ""),
         "storage_error": RUNTIME_STATE.get("storage_error", ""),
+        "last_tamper_lock": state.get("last_tamper_lock", {}),
+        "last_tamper_miss": state.get("last_tamper_miss", {}),
     }
 
 
@@ -663,6 +665,15 @@ def api_tamper_report_for_app(payload: TamperPayload, app_key: str) -> dict[str,
     lic["active"] = False
     lic["online"] = False
     lic["session_token"] = ""
+    app_state(app_key)["last_tamper_lock"] = {
+        "license_id": str(lic.get("id") or ""),
+        "name": str(lic.get("name") or ""),
+        "reason": report["reason"],
+        "source": report["source"],
+        "client_id": report["client_id"],
+        "script_id": report["script_id"],
+        "reported_at": now,
+    }
     save_state(force=True)
     return {"success": True, "locked": True}
 
