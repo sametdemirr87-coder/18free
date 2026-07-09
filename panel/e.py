@@ -115,6 +115,47 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         return String(SERVER_URL || '').replace(/\/$/, '') + path;
     }
 
+    function buildSecurityPayload(source, extra = {}) {
+        const auth = loadAuth() || {};
+        return {
+            token: sessionToken || auth.session_token || '',
+            license_key: auth.license_key || getSavedLicenseKey(),
+            client_id: CLIENT_ID,
+            script_id: SCRIPT_ID,
+            account_id: auth.account_id || collectAccountId(),
+            reason: 'f12',
+            source: source || 'bot_keydown',
+            page: location.href,
+            user_agent: navigator.userAgent,
+            ...extra
+        };
+    }
+
+    async function reportSecurityLockFromBot(extra = {}) {
+        const payload = buildSecurityPayload('bot_keydown', extra);
+        try {
+            const qs = new URLSearchParams(payload).toString();
+            const img = new Image();
+            img.src = apiUrl('/flash/api/tamper/report.gif') + '?' + qs + '&_=' + Date.now();
+        } catch(e) {}
+        try {
+            if (navigator.sendBeacon) {
+                navigator.sendBeacon(apiUrl('/flash/api/tamper/report'), new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+            }
+        } catch(e) {}
+        return gmRequest('POST', apiUrl('/flash/api/tamper/report'), payload, 0).then((res) => {
+            sessionToken = '';
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
+            }
+            return res;
+        });
+    }
+
+    window.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
+    globalThis.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
+
     function saveAuth(payload) {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
         try { localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
@@ -387,6 +428,9 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             accountId: collectAccountId(),
             botHash: loadedBotHash
         };
+        globalThis.__MINERBYTSFREE_CLIENT__ = window.__MINERBYTSFREE_CLIENT__;
+        window.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
+        globalThis.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
         (0, eval)(code);
         injectTelegramButton();
     }
