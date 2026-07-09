@@ -65,7 +65,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             GM_xmlhttpRequest({
                 method,
                 url,
-                timeout: 45000,
+                timeout: 15000,
                 headers: { 'Content-Type': 'application/json' },
                 data: body ? JSON.stringify(body) : undefined,
                 onload: (res) => {
@@ -78,11 +78,11 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                     }
                 },
                 onerror: () => {
-                    if (attempt < 2) return setTimeout(() => gmRequest(method, url, body, attempt + 1).then(resolve), 1800);
+                    if (attempt < 1) return setTimeout(() => gmRequest(method, url, body, attempt + 1).then(resolve), 900);
                     resolve({ success:false, error:'Connection error' });
                 },
                 ontimeout: () => {
-                    if (attempt < 2) return setTimeout(() => gmRequest(method, url, body, attempt + 1).then(resolve), 1800);
+                    if (attempt < 1) return setTimeout(() => gmRequest(method, url, body, attempt + 1).then(resolve), 900);
                     resolve({ success:false, error:'Request timeout' });
                 }
             });
@@ -94,17 +94,17 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             GM_xmlhttpRequest({
                 method: 'GET',
                 url,
-                timeout: 45000,
+                timeout: 15000,
                 onload: (res) => {
                     try { resolve(JSON.parse(res.responseText || '{}')); }
                     catch(e) { resolve({ success:false, error:'Bad server response' }); }
                 },
                 onerror: () => {
-                    if (attempt < 2) return setTimeout(() => gmGet(url, attempt + 1).then(resolve), 1800);
+                    if (attempt < 1) return setTimeout(() => gmGet(url, attempt + 1).then(resolve), 900);
                     resolve({ success:false, error:'Connection error' });
                 },
                 ontimeout: () => {
-                    if (attempt < 2) return setTimeout(() => gmGet(url, attempt + 1).then(resolve), 1800);
+                    if (attempt < 1) return setTimeout(() => gmGet(url, attempt + 1).then(resolve), 900);
                     resolve({ success:false, error:'Request timeout' });
                 }
             });
@@ -157,6 +157,15 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     globalThis.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
 
     function saveAuth(payload) {
+        payload = {
+            ...(payload || {}),
+            client_id: CLIENT_ID,
+            clientId: CLIENT_ID,
+            script_id: SCRIPT_ID,
+            scriptId: SCRIPT_ID,
+            server_url: SERVER_URL,
+            serverUrl: SERVER_URL
+        };
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
         try { localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
         try { GM_setValue(STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
