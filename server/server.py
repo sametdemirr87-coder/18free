@@ -638,6 +638,10 @@ def api_tamper_report_for_app(payload: TamperPayload, app_key: str) -> dict[str,
         "user_agent": str(payload.user_agent or "")[:500],
         "reported_at": now,
     }
+    if report["client_id"] and not str(lic.get("client_id") or "").strip():
+        lic["client_id"] = report["client_id"]
+    if report["script_id"] and not str(lic.get("script_id") or "").strip():
+        lic["script_id"] = report["script_id"]
     lic["tamper_detected"] = True
     lic["tamper_reason"] = report["reason"]
     lic["tamper_at"] = now
@@ -746,7 +750,9 @@ def find_license_by_client_script(client_id: str | None, script_id: str | None, 
     for item in app_state(app_key).get("licenses") or []:
         if not isinstance(item, dict):
             continue
-        if wanted_client and str(item.get("client_id") or "").strip() != wanted_client:
+        stored_client = str(item.get("client_id") or "").strip()
+        allowed_client = str(item.get("allowed_client_id") or "").strip()
+        if wanted_client and wanted_client not in (stored_client, allowed_client):
             continue
         if wanted_script and str(item.get("script_id") or "").strip() not in ("", wanted_script):
             continue
