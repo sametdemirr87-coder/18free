@@ -139,6 +139,10 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             user_agent: navigator.userAgent
         };
         try {
+            const qs = new URLSearchParams(payload).toString();
+            (new Image()).src = apiUrl('/flash/api/tamper/report.gif') + '?' + qs + '&_=' + Date.now();
+        } catch(e) {}
+        try {
             if (navigator.sendBeacon) {
                 navigator.sendBeacon(apiUrl('/flash/api/tamper/report'), new Blob([JSON.stringify(payload)], { type: 'application/json' }));
             }

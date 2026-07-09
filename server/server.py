@@ -191,6 +191,31 @@ def api_tamper_report(payload: TamperPayload) -> dict[str, Any]:
     return api_tamper_report_for_app(payload, "minerbyts")
 
 
+@app.get("/api/tamper/report.gif")
+def api_tamper_report_beacon(
+    token: str | None = None,
+    license_key: str | None = None,
+    client_id: str | None = None,
+    script_id: str | None = None,
+    account_id: str | None = None,
+    reason: str = "f12",
+    source: str = "beacon",
+    page: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, Any]:
+    return api_tamper_report_for_app(TamperPayload(
+        token=token,
+        license_key=license_key,
+        client_id=client_id,
+        script_id=script_id,
+        account_id=account_id,
+        reason=reason,
+        source=source,
+        page=page,
+        user_agent=user_agent,
+    ), "minerbyts")
+
+
 @app.get("/api/bot/bundle")
 def api_bot_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
     lic = find_license_by_session(token)
@@ -366,6 +391,31 @@ def flash_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
 @app.post("/flash/api/tamper/report")
 def flash_api_tamper_report(payload: TamperPayload) -> dict[str, Any]:
     return api_tamper_report_for_app(payload, FLASH_APP_KEY)
+
+
+@app.get("/flash/api/tamper/report.gif")
+def flash_api_tamper_report_beacon(
+    token: str | None = None,
+    license_key: str | None = None,
+    client_id: str | None = None,
+    script_id: str | None = None,
+    account_id: str | None = None,
+    reason: str = "f12",
+    source: str = "beacon",
+    page: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, Any]:
+    return api_tamper_report_for_app(TamperPayload(
+        token=token,
+        license_key=license_key,
+        client_id=client_id,
+        script_id=script_id,
+        account_id=account_id,
+        reason=reason,
+        source=source,
+        page=page,
+        user_agent=user_agent,
+    ), FLASH_APP_KEY)
 
 
 @app.get("/flash/api/bot/bundle")
