@@ -10,5 +10,9 @@ panel/generated_scripts/*
 panel/flash_panel_settings.json
 panel/generated_flash_scripts_index.json
 panel/generated_flash_scripts/*
+panel/elizabeth_panel_settings.json
+panel/generated_elizabeth_scripts_index.json
+panel/generated_elizabeth_scripts/*
 BOT2.txt
 BOT2.data.backup.txt
+bot147.txt

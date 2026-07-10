@@ -19,7 +19,9 @@ import config
 APP_STATE_KEY = "minerbytsfree_runtime"
 BOT_BUNDLE_KEY = "minerbytsfree_bot_bundle"
 FLASH_BOT_BUNDLE_KEY = "flashminers_bot_bundle"
+ELIZABETH_BOT_BUNDLE_KEY = "elizabeth_bot_bundle"
 FLASH_APP_KEY = "flashminers"
+ELIZABETH_APP_KEY = "elizabeth"
 
 app = FastAPI(title=config.APP_NAME)
 app.add_middleware(
@@ -41,6 +43,11 @@ RUNTIME_STATE: dict[str, Any] = {
     "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
     "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
     FLASH_APP_KEY: {
+        "licenses": [],
+        "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
+        "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
+    },
+    ELIZABETH_APP_KEY: {
         "licenses": [],
         "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
         "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
@@ -105,11 +112,17 @@ def app_state(app_key: str = "minerbyts") -> dict[str, Any]:
     ensure_shapes()
     if app_key == FLASH_APP_KEY:
         return RUNTIME_STATE[FLASH_APP_KEY]
+    if app_key == ELIZABETH_APP_KEY:
+        return RUNTIME_STATE[ELIZABETH_APP_KEY]
     return RUNTIME_STATE
 
 
 def app_label(app_key: str = "minerbyts") -> str:
-    return "flashminers" if app_key == FLASH_APP_KEY else "minerbyts"
+    if app_key == FLASH_APP_KEY:
+        return "flashminers"
+    if app_key == ELIZABETH_APP_KEY:
+        return "elizabeth"
+    return "minerbyts"
 
 
 @app.get("/")
@@ -470,6 +483,117 @@ def flash_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None 
     return admin_bot_upload_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
 
+@app.get("/elizabeth/health")
+def elizabeth_health() -> dict[str, Any]:
+    ensure_shapes()
+    state = app_state(ELIZABETH_APP_KEY)
+    bundle = state.get("bot_bundle") or {}
+    return {
+        "success": True,
+        "project": "elizabeth",
+        "status": RUNTIME_STATE.get("status", "unknown"),
+        "time": utc_now(),
+        "supabase": bool(SUPABASE),
+        "license_count": len(state.get("licenses") or []),
+        "bot_uploaded": bool(bundle.get("content")),
+        "bot_hash": bundle.get("hash", ""),
+        "last_sync": RUNTIME_STATE.get("last_sync", ""),
+        "storage_error": RUNTIME_STATE.get("storage_error", ""),
+        "last_tamper_lock": state.get("last_tamper_lock", {}),
+        "last_tamper_miss": state.get("last_tamper_miss", {}),
+    }
+
+
+@app.post("/elizabeth/api/auth")
+def elizabeth_api_auth(payload: AuthPayload) -> dict[str, Any]:
+    return api_auth_for_app(payload, ELIZABETH_APP_KEY)
+
+
+@app.post("/elizabeth/api/heartbeat")
+def elizabeth_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
+    return api_heartbeat_for_app(payload, ELIZABETH_APP_KEY)
+
+
+@app.post("/elizabeth/api/tamper/report")
+def elizabeth_api_tamper_report(payload: TamperPayload) -> dict[str, Any]:
+    return api_tamper_report_for_app(payload, ELIZABETH_APP_KEY)
+
+
+@app.get("/elizabeth/api/tamper/report.gif")
+def elizabeth_api_tamper_report_beacon(
+    token: str | None = None,
+    license_key: str | None = None,
+    client_id: str | None = None,
+    script_id: str | None = None,
+    account_id: str | None = None,
+    reason: str = "f12",
+    source: str = "beacon",
+    page: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, Any]:
+    return api_tamper_report_for_app(TamperPayload(
+        token=token,
+        license_key=license_key,
+        client_id=client_id,
+        script_id=script_id,
+        account_id=account_id,
+        reason=reason,
+        source=source,
+        page=page,
+        user_agent=user_agent,
+    ), ELIZABETH_APP_KEY)
+
+
+@app.get("/elizabeth/api/bot/bundle")
+def elizabeth_api_bot_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
+    return api_bot_bundle_for_app(token, client_id, script_id, account_id, ELIZABETH_APP_KEY)
+
+
+@app.get("/elizabeth/admin/state")
+def elizabeth_admin_state(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    ensure_shapes()
+    return {"success": True, "state": app_state(ELIZABETH_APP_KEY)}
+
+
+@app.get("/elizabeth/admin/licenses")
+def elizabeth_admin_licenses(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    ensure_shapes()
+    mark_stale_offline()
+    return {"success": True, "licenses": [sanitize_license(x) for x in app_state(ELIZABETH_APP_KEY).get("licenses", [])]}
+
+
+@app.post("/elizabeth/admin/license/create")
+def elizabeth_admin_license_create(payload: LicenseCreatePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_create_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+
+
+@app.post("/elizabeth/admin/license/toggle")
+def elizabeth_admin_license_toggle(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_toggle_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+
+
+@app.post("/elizabeth/admin/license/key")
+def elizabeth_admin_license_key(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_key_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+
+
+@app.post("/elizabeth/admin/license/delete")
+def elizabeth_admin_license_delete(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_delete_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+
+
+@app.post("/elizabeth/admin/license/tamper-clear")
+def elizabeth_admin_license_tamper_clear(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_tamper_clear_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+
+
+@app.post("/elizabeth/admin/bot/upload")
+def elizabeth_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_bot_upload_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+
+
 def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
     ensure_shapes()
     state = app_state(app_key)
@@ -534,7 +658,7 @@ def api_bot_bundle_for_app(token: str, client_id: str, script_id: str | None, ac
     lic["last_seen_at"] = utc_now()
     return {
         "success": True,
-        "name": bundle.get("name") or ("BOT2.txt" if app_key == FLASH_APP_KEY else "botfree.txt"),
+        "name": bundle.get("name") or default_bot_name(app_key),
         "version": bundle.get("version") or 0,
         "hash": bundle.get("hash") or "",
         "encoding": "xor-base64",
@@ -733,7 +857,7 @@ def admin_bot_upload_for_app(payload: BotUploadPayload, x_admin_token: str | Non
         return {"success": False, "error": "Bot icerigi bos"}
     old = state.get("bot_bundle") or {}
     bundle = {
-        "name": payload.file_name or ("BOT2.txt" if app_key == FLASH_APP_KEY else "botfree.txt"),
+        "name": payload.file_name or default_bot_name(app_key),
         "content": content,
         "hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
         "version": int(old.get("version") or 0) + 1,
@@ -749,11 +873,12 @@ def ensure_shapes() -> None:
     RUNTIME_STATE.setdefault("licenses", [])
     RUNTIME_STATE.setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
     RUNTIME_STATE.setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
-    RUNTIME_STATE.setdefault(FLASH_APP_KEY, {})
-    RUNTIME_STATE[FLASH_APP_KEY].setdefault("licenses", [])
-    RUNTIME_STATE[FLASH_APP_KEY].setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
-    RUNTIME_STATE[FLASH_APP_KEY].setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
-    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY]):
+    for app_key in (FLASH_APP_KEY, ELIZABETH_APP_KEY):
+        RUNTIME_STATE.setdefault(app_key, {})
+        RUNTIME_STATE[app_key].setdefault("licenses", [])
+        RUNTIME_STATE[app_key].setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
+        RUNTIME_STATE[app_key].setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
+    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[ELIZABETH_APP_KEY]):
         for lic in state.get("licenses") or []:
             if not isinstance(lic, dict):
                 continue
@@ -893,8 +1018,16 @@ def summarize_bot_bundle(app_key: str = "minerbyts") -> dict[str, Any]:
 
 
 def generate_license_key(app_key: str = "minerbyts") -> str:
-    prefix = "FMF" if app_key == FLASH_APP_KEY else "MBF"
+    prefix = "FMF" if app_key == FLASH_APP_KEY else ("ELZ" if app_key == ELIZABETH_APP_KEY else "MBF")
     return prefix + "-" + "-".join(secrets.token_hex(2).upper() for _ in range(4))
+
+
+def default_bot_name(app_key: str = "minerbyts") -> str:
+    if app_key == FLASH_APP_KEY:
+        return "BOT2.txt"
+    if app_key == ELIZABETH_APP_KEY:
+        return "bot147.txt"
+    return "botfree.txt"
 
 
 def encrypt_for_client(text: str, client_id: str) -> str:
@@ -946,6 +1079,10 @@ def load_bot_bundle() -> None:
         rows = result.data or []
         if rows and isinstance(rows[0].get("value"), dict):
             RUNTIME_STATE[FLASH_APP_KEY]["bot_bundle"] = rows[0]["value"]
+        result = SUPABASE.table("app_state").select("value").eq("key", ELIZABETH_BOT_BUNDLE_KEY).limit(1).execute()
+        rows = result.data or []
+        if rows and isinstance(rows[0].get("value"), dict):
+            RUNTIME_STATE[ELIZABETH_APP_KEY]["bot_bundle"] = rows[0]["value"]
         RUNTIME_STATE.pop("bot_storage_error", None)
     except Exception as exc:
         RUNTIME_STATE["bot_storage_error"] = str(exc)
@@ -968,6 +1105,11 @@ def save_state(force: bool = False) -> None:
     flash_bot.pop("content", None)
     flash_state["bot_bundle"] = flash_bot
     payload[FLASH_APP_KEY] = flash_state
+    elizabeth_state = dict(payload.get(ELIZABETH_APP_KEY) or {})
+    elizabeth_bot = dict(elizabeth_state.get("bot_bundle") or {})
+    elizabeth_bot.pop("content", None)
+    elizabeth_state["bot_bundle"] = elizabeth_bot
+    payload[ELIZABETH_APP_KEY] = elizabeth_state
     save_app_state(APP_STATE_KEY, payload, "storage_error")
 
 
@@ -976,6 +1118,8 @@ def save_bot_bundle(force: bool = False, app_key: str = "minerbyts") -> None:
         return
     if app_key == FLASH_APP_KEY:
         save_app_state(FLASH_BOT_BUNDLE_KEY, RUNTIME_STATE[FLASH_APP_KEY].get("bot_bundle") or {}, "flash_bot_storage_error")
+    elif app_key == ELIZABETH_APP_KEY:
+        save_app_state(ELIZABETH_BOT_BUNDLE_KEY, RUNTIME_STATE[ELIZABETH_APP_KEY].get("bot_bundle") or {}, "elizabeth_bot_storage_error")
     else:
         save_app_state(BOT_BUNDLE_KEY, RUNTIME_STATE.get("bot_bundle") or {}, "bot_storage_error")
 
@@ -994,7 +1138,7 @@ def save_app_state(key: str, value: dict[str, Any], error_key: str) -> None:
 def mark_stale_offline() -> None:
     now = time.time()
     changed = False
-    for state in (RUNTIME_STATE, RUNTIME_STATE.get(FLASH_APP_KEY) or {}):
+    for state in (RUNTIME_STATE, RUNTIME_STATE.get(FLASH_APP_KEY) or {}, RUNTIME_STATE.get(ELIZABETH_APP_KEY) or {}):
         for lic in state.get("licenses") or []:
             seen = parse_time(lic.get("last_seen_at"))
             if lic.get("online") and seen and now - seen > 120:
