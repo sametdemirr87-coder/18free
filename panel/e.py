@@ -165,8 +165,39 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         });
     }
 
+    let securityLockSent = false;
+    function installSecurityShortcuts() {
+        if (window.__NEXUS_ZUNCIA_SECURITY_KEYS__) return;
+        window.__NEXUS_ZUNCIA_SECURITY_KEYS__ = true;
+        const lock = (source, event) => {
+            try {
+                if (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.stopImmediatePropagation();
+                }
+            } catch(e) {}
+            if (securityLockSent) return false;
+            securityLockSent = true;
+            reportSecurityLockFromBot({ source, reason: 'f12' }).finally(() => {
+                try { showGate('Security lock. Contact Nexus.'); } catch(e) {}
+            });
+            return false;
+        };
+        window.addEventListener('keydown', (event) => {
+            const key = String(event.key || '').toLowerCase();
+            const code = String(event.code || '').toLowerCase();
+            const devCombo = event.ctrlKey && event.shiftKey && ['i', 'j', 'c'].includes(key);
+            const viewSource = event.ctrlKey && key === 'u';
+            if (key === 'f12' || code === 'f12' || devCombo || viewSource) {
+                return lock('loader_keydown', event);
+            }
+        }, true);
+    }
+
     window.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
     globalThis.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
+    installSecurityShortcuts();
 
     function saveAuth(payload) {
         payload = {
