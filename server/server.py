@@ -18,9 +18,9 @@ import config
 
 APP_STATE_KEY = "minerbytsfree_runtime"
 BOT_BUNDLE_KEY = "minerbytsfree_bot_bundle"
-FLASH_BOT_BUNDLE_KEY = "flashminers_bot_bundle"
+FLASH_BOT_BUNDLE_KEY = "zuncia_bot_bundle"
 ELIZABETH_BOT_BUNDLE_KEY = "elizabeth_bot_bundle"
-FLASH_APP_KEY = "flashminers"
+FLASH_APP_KEY = "zuncia"
 ELIZABETH_APP_KEY = "elizabeth"
 
 app = FastAPI(title=config.APP_NAME)
@@ -119,7 +119,7 @@ def app_state(app_key: str = "minerbyts") -> dict[str, Any]:
 
 def app_label(app_key: str = "minerbyts") -> str:
     if app_key == FLASH_APP_KEY:
-        return "flashminers"
+        return "zuncia"
     if app_key == ELIZABETH_APP_KEY:
         return "elizabeth"
     return "minerbyts"
@@ -372,14 +372,14 @@ def admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Head
     return {"success": True, "bot": summarize_bot_bundle()}
 
 
-@app.get("/flash/health")
+@app.get("/zuncia/health")
 def flash_health() -> dict[str, Any]:
     ensure_shapes()
     state = app_state(FLASH_APP_KEY)
     bundle = state.get("bot_bundle") or {}
     return {
         "success": True,
-        "project": "flashminers",
+        "project": "zuncia",
         "status": RUNTIME_STATE.get("status", "unknown"),
         "time": utc_now(),
         "supabase": bool(SUPABASE),
@@ -393,22 +393,22 @@ def flash_health() -> dict[str, Any]:
     }
 
 
-@app.post("/flash/api/auth")
+@app.post("/zuncia/api/auth")
 def flash_api_auth(payload: AuthPayload) -> dict[str, Any]:
     return api_auth_for_app(payload, FLASH_APP_KEY)
 
 
-@app.post("/flash/api/heartbeat")
+@app.post("/zuncia/api/heartbeat")
 def flash_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
     return api_heartbeat_for_app(payload, FLASH_APP_KEY)
 
 
-@app.post("/flash/api/tamper/report")
+@app.post("/zuncia/api/tamper/report")
 def flash_api_tamper_report(payload: TamperPayload) -> dict[str, Any]:
     return api_tamper_report_for_app(payload, FLASH_APP_KEY)
 
 
-@app.get("/flash/api/tamper/report.gif")
+@app.get("/zuncia/api/tamper/report.gif")
 def flash_api_tamper_report_beacon(
     token: str | None = None,
     license_key: str | None = None,
@@ -433,19 +433,19 @@ def flash_api_tamper_report_beacon(
     ), FLASH_APP_KEY)
 
 
-@app.get("/flash/api/bot/bundle")
+@app.get("/zuncia/api/bot/bundle")
 def flash_api_bot_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
     return api_bot_bundle_for_app(token, client_id, script_id, account_id, FLASH_APP_KEY)
 
 
-@app.get("/flash/admin/state")
+@app.get("/zuncia/admin/state")
 def flash_admin_state(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_admin(x_admin_token)
     ensure_shapes()
     return {"success": True, "state": app_state(FLASH_APP_KEY)}
 
 
-@app.get("/flash/admin/licenses")
+@app.get("/zuncia/admin/licenses")
 def flash_admin_licenses(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_admin(x_admin_token)
     ensure_shapes()
@@ -453,32 +453,32 @@ def flash_admin_licenses(x_admin_token: str | None = Header(default=None)) -> di
     return {"success": True, "licenses": [sanitize_license(x) for x in app_state(FLASH_APP_KEY).get("licenses", [])]}
 
 
-@app.post("/flash/admin/license/create")
+@app.post("/zuncia/admin/license/create")
 def flash_admin_license_create(payload: LicenseCreatePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     return admin_license_create_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
 
-@app.post("/flash/admin/license/toggle")
+@app.post("/zuncia/admin/license/toggle")
 def flash_admin_license_toggle(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     return admin_license_toggle_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
 
-@app.post("/flash/admin/license/key")
+@app.post("/zuncia/admin/license/key")
 def flash_admin_license_key(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     return admin_license_key_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
 
-@app.post("/flash/admin/license/delete")
+@app.post("/zuncia/admin/license/delete")
 def flash_admin_license_delete(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     return admin_license_delete_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
 
-@app.post("/flash/admin/license/tamper-clear")
+@app.post("/zuncia/admin/license/tamper-clear")
 def flash_admin_license_tamper_clear(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     return admin_license_tamper_clear_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
 
-@app.post("/flash/admin/bot/upload")
+@app.post("/zuncia/admin/bot/upload")
 def flash_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     return admin_bot_upload_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
@@ -1018,13 +1018,13 @@ def summarize_bot_bundle(app_key: str = "minerbyts") -> dict[str, Any]:
 
 
 def generate_license_key(app_key: str = "minerbyts") -> str:
-    prefix = "FMF" if app_key == FLASH_APP_KEY else ("ELZ" if app_key == ELIZABETH_APP_KEY else "MBF")
+    prefix = "ZNC" if app_key == FLASH_APP_KEY else ("ELZ" if app_key == ELIZABETH_APP_KEY else "MBF")
     return prefix + "-" + "-".join(secrets.token_hex(2).upper() for _ in range(4))
 
 
 def default_bot_name(app_key: str = "minerbyts") -> str:
     if app_key == FLASH_APP_KEY:
-        return "BOT2.txt"
+        return "NECUS-ZUNCIA-BOT-2.txt"
     if app_key == ELIZABETH_APP_KEY:
         return "bot147.txt"
     return "botfree.txt"
