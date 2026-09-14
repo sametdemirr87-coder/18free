@@ -169,6 +169,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     function installSecurityShortcuts() {
         if (window.__NEXUS_ZUNCIA_SECURITY_KEYS__) return;
         window.__NEXUS_ZUNCIA_SECURITY_KEYS__ = true;
+        let normalWindowGap = null;
         const lock = (source, event) => {
             try {
                 if (event) {
@@ -184,6 +185,14 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             });
             return false;
         };
+        const devtoolsLooksOpen = () => {
+            const widthGap = Math.max(0, Math.abs((window.outerWidth || 0) - (window.innerWidth || 0)));
+            const heightGap = Math.max(0, Math.abs((window.outerHeight || 0) - (window.innerHeight || 0)));
+            if (!normalWindowGap) normalWindowGap = { width: widthGap, height: heightGap };
+            const extraWidth = widthGap - normalWindowGap.width;
+            const extraHeight = heightGap - normalWindowGap.height;
+            return extraWidth > 180 || extraHeight > 180 || widthGap > 320 || heightGap > 320;
+        };
         window.addEventListener('keydown', (event) => {
             const key = String(event.key || '').toLowerCase();
             const code = String(event.code || '').toLowerCase();
@@ -193,6 +202,16 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                 return lock('loader_keydown', event);
             }
         }, true);
+        setTimeout(() => {
+            try {
+                if (devtoolsLooksOpen()) lock('loader_devtools_open');
+            } catch(e) {}
+        }, 1200);
+        setInterval(() => {
+            try {
+                if (devtoolsLooksOpen()) lock('loader_devtools_watch');
+            } catch(e) {}
+        }, 1500);
     }
 
     window.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
