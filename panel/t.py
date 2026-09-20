@@ -17,11 +17,11 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BASE_DIR.parent
-SETTINGS_FILE = BASE_DIR / "elizabeth_panel_settings.json"
-BOT_FILE = ROOT_DIR / "bot147.txt"
-GENERATED_DIR = BASE_DIR / "generated_elizabeth_scripts"
+SETTINGS_FILE = BASE_DIR / "aztlacoin_panel_settings.json"
+BOT_FILE = ROOT_DIR / ".codex" / "botazalt.txt"
+GENERATED_DIR = BASE_DIR / "generated_aztlacoin_scripts"
 GENERATED_DIR.mkdir(exist_ok=True)
-SCRIPT_INDEX_FILE = BASE_DIR / "generated_elizabeth_scripts_index.json"
+SCRIPT_INDEX_FILE = BASE_DIR / "generated_aztlacoin_scripts_index.json"
 
 DEFAULT_SETTINGS = {
     "server_url": "https://one8free.onrender.com",
@@ -31,10 +31,10 @@ DEFAULT_SETTINGS = {
 
 CLIENT_TEMPLATE = r'''// ==UserScript==
 // @name         __CLIENT_NAME__
-// @namespace    nexus.elizabeth
-// @version      1.0.0
-// @description  Nexus Elizabeth Bot secure loader
-// @match        https://game.elizabeth.meme/*
+// @namespace    nexus.aztlacoin
+// @version      2.0.0
+// @description  Nexus AztlaCoin Bot secure loader
+// @match        https://aztlacoin.online/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -50,7 +50,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const CLIENT_ID = '__CLIENT_ID__';
     const SCRIPT_ID = '__SCRIPT_ID__';
     const SCRIPT_IDENTITY = Object.freeze({
-        app: 'elizabeth',
+        app: 'aztlacoin',
         clientId: CLIENT_ID,
         client_id: CLIENT_ID,
         scriptId: SCRIPT_ID,
@@ -59,8 +59,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         server_url: SERVER_URL,
         createdAt: '__CREATED_AT__'
     });
-    const STORAGE_KEY = 'elizabeth_auth_' + CLIENT_ID;
-    const GLOBAL_STORAGE_KEY = 'elizabeth_auth_latest';
+    const STORAGE_KEY = 'aztlacoin_auth_' + CLIENT_ID;
+    const GLOBAL_STORAGE_KEY = 'aztlacoin_auth_latest';
     const TELEGRAM_URL = 'https://t.me/+cxRPV2-7C_Y0Yjc0';
     const TELEGRAM_ICON = 'https://telegram.org/img/favicon.ico';
     let sessionToken = '';
@@ -148,14 +148,14 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         try {
             const qs = new URLSearchParams(payload).toString();
             const img = new Image();
-            img.src = apiUrl('/elizabeth/api/tamper/report.gif') + '?' + qs + '&_=' + Date.now();
+            img.src = apiUrl('/aztlacoin/api/tamper/report.gif') + '?' + qs + '&_=' + Date.now();
         } catch(e) {}
         try {
             if (navigator.sendBeacon) {
-                navigator.sendBeacon(apiUrl('/elizabeth/api/tamper/report'), new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+                navigator.sendBeacon(apiUrl('/aztlacoin/api/tamper/report'), new Blob([JSON.stringify(payload)], { type: 'application/json' }));
             }
         } catch(e) {}
-        return gmRequest('POST', apiUrl('/elizabeth/api/tamper/report'), payload, 0).then((res) => {
+        return gmRequest('POST', apiUrl('/aztlacoin/api/tamper/report'), payload, 0).then((res) => {
             sessionToken = '';
             if (heartbeatTimer) {
                 clearInterval(heartbeatTimer);
@@ -216,10 +216,10 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 
     function collectAccountId() {
         try {
-            let fp = localStorage.getItem('elizabeth_device_id') || '';
+            let fp = localStorage.getItem('aztlacoin_device_id') || '';
             if (!fp) {
                 fp = 'dev_' + Math.random().toString(16).slice(2) + Date.now().toString(16);
-                localStorage.setItem('elizabeth_device_id', fp);
+                localStorage.setItem('aztlacoin_device_id', fp);
             }
             return fp;
         } catch(e) {
@@ -272,7 +272,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                     <div class="nfg-top">
                         <div class="nfg-brand">
                             <div class="nfg-sub">Secure access</div>
-                            <div class="nfg-title">Nexus Elizabeth Bot</div>
+                            <div class="nfg-title">Nexus AztlaCoin Bot</div>
                         </div>
                         <button class="nfg-tg" id="nfgTelegram" title="Open Telegram"><img src="${TELEGRAM_ICON}" alt=""></button>
                     </div>
@@ -281,7 +281,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                     <button class="nfg-btn" id="nfgUnlock">UNLOCK BOT</button>
                     <div class="nfg-loader"></div>
                     <div class="nfg-status" id="nfgStatus">${escapeHtml(message || 'Enter your key to continue.')}</div>
-                    <div class="nfg-mini">ELIZABETH ACCESS</div>
+                    <div class="nfg-mini">AZTLACOIN ACCESS</div>
                 </div>
             `;
             document.documentElement.appendChild(uiRoot);
@@ -335,8 +335,10 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     function injectTelegramButton() {
         const apply = () => {
             try {
-                if (document.getElementById('nexusBotTelegramBtn')) return true;
-                const settingsBtn = document.getElementById('mbSettingsBtn');
+                const botRoot = document.getElementById('nxaz-host')?.shadowRoot;
+                if (!botRoot) return false;
+                if (botRoot.getElementById('nexusBotTelegramBtn')) return true;
+                const settingsBtn = botRoot.getElementById('settingsBtn');
                 if (!settingsBtn || !settingsBtn.parentElement) return false;
                 const btn = document.createElement('button');
                 btn.id = 'nexusBotTelegramBtn';
@@ -390,7 +392,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         licenseKey = String(licenseKey || '').trim();
         if (!licenseKey) return { success:false, error:'License key is required' };
         const accountId = collectAccountId();
-        const res = await gmRequest('POST', apiUrl('/elizabeth/api/auth'), {
+        const res = await gmRequest('POST', apiUrl('/aztlacoin/api/auth'), {
             license_key: licenseKey,
             client_id: CLIENT_ID,
             script_id: SCRIPT_ID,
@@ -407,7 +409,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 
     async function heartbeat() {
         if (!sessionToken) return;
-        const res = await gmRequest('POST', apiUrl('/elizabeth/api/heartbeat'), {
+        const res = await gmRequest('POST', apiUrl('/aztlacoin/api/heartbeat'), {
             token: sessionToken,
             client_id: CLIENT_ID,
             script_id: SCRIPT_ID,
@@ -433,7 +435,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             + '&client_id=' + encodeURIComponent(CLIENT_ID)
             + '&script_id=' + encodeURIComponent(SCRIPT_ID)
             + '&account_id=' + encodeURIComponent(collectAccountId());
-        const bundle = await gmGet(apiUrl('/elizabeth/api/bot/bundle') + qs);
+        const bundle = await gmGet(apiUrl('/aztlacoin/api/bot/bundle') + qs);
         if (!bundle || !bundle.success) {
             throw new Error((bundle && bundle.error) || 'Bot could not be loaded');
         }
@@ -476,7 +478,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             clearTimeout(silentRetryTimer);
             silentRetryTimer = null;
         }
-        if (!silent) setGateLoading(true, 'Loading Nexus Elizabeth Bot...');
+        if (!silent) setGateLoading(true, 'Loading Nexus AztlaCoin Bot...');
         try {
             await fetchAndRunBot();
         } catch(err) {
@@ -505,7 +507,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         showGate();
     }
 
-    boot();
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
+    else boot();
 })();
 '''
 
@@ -549,14 +552,16 @@ def safe_name(value: str, fallback: str = "User") -> str:
     return out or fallback
 
 
-class ElizabethPanel(tk.Tk):
+class AztlaCoinPanel(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Elizabeth Server Panel")
+        self.title("AztlaCoin Server Panel")
         self.geometry("1080x720")
         self.minsize(980, 640)
         self.configure(bg="#0b1020")
-        self.settings = {**DEFAULT_SETTINGS, **load_json(SETTINGS_FILE, {})}
+        legacy_settings = load_json(BASE_DIR / "elizabeth_panel_settings.json", {})
+        connection_settings = {key: legacy_settings[key] for key in ("server_url", "admin_token") if key in legacy_settings}
+        self.settings = {**DEFAULT_SETTINGS, **connection_settings, **load_json(SETTINGS_FILE, {})}
         self.licenses_cache = []
         self.server_var = tk.StringVar(value=self.settings.get("server_url", ""))
         self.admin_var = tk.StringVar(value=self.settings.get("admin_token", ""))
@@ -576,7 +581,7 @@ class ElizabethPanel(tk.Tk):
 
         header = tk.Frame(self, bg="#0b1020")
         header.pack(fill="x", padx=18, pady=(16, 10))
-        tk.Label(header, text="ELIZABETH VIP PANEL", bg="#0b1020", fg="#f472b6", font=("Segoe UI", 18, "bold")).pack(side="left")
+        tk.Label(header, text="AZTLACOIN VIP PANEL", bg="#0b1020", fg="#f472b6", font=("Segoe UI", 18, "bold")).pack(side="left")
         tk.Label(header, text="Server bagli: one8free.onrender.com", bg="#0b1020", fg="#64748b", font=("Segoe UI", 10, "bold")).pack(side="right")
 
         main = tk.Frame(self, bg="#0b1020")
@@ -667,7 +672,7 @@ class ElizabethPanel(tk.Tk):
             self.save_settings()
             path = Path(self.bot_path_var.get().strip())
             content = path.read_text(encoding="utf-8", errors="replace")
-            res = api_json("POST", self.server_url("/elizabeth/admin/bot/upload"), {"file_name": path.name, "content": content}, self.admin_var.get().strip())
+            res = api_json("POST", self.server_url("/aztlacoin/admin/bot/upload"), {"file_name": path.name, "content": content}, self.admin_var.get().strip())
             self.log_line("Bot upload: " + json.dumps(res.get("bot") or res, ensure_ascii=False))
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "Bot yuklenemedi")
@@ -679,7 +684,7 @@ class ElizabethPanel(tk.Tk):
     def generate_script(self):
         try:
             self.save_settings()
-            client_id = "elz_" + secrets.token_hex(8)
+            client_id = "azt_" + secrets.token_hex(8)
             script_id = "script_" + secrets.token_hex(8)
             user_name = self.license_name_var.get().strip() or self.next_user_name()
             if self.is_reserved_user_name(user_name):
@@ -694,7 +699,7 @@ class ElizabethPanel(tk.Tk):
             }
             if manual_key:
                 payload["key"] = manual_key
-            lic_res = api_json("POST", self.server_url("/elizabeth/admin/license/create"), payload, self.admin_var.get().strip())
+            lic_res = api_json("POST", self.server_url("/aztlacoin/admin/license/create"), payload, self.admin_var.get().strip())
             if not lic_res.get("success"):
                 raise RuntimeError(lic_res.get("error") or "Lisans olusmadi")
             lic = lic_res["license"]
@@ -723,7 +728,7 @@ class ElizabethPanel(tk.Tk):
 
     def refresh_licenses(self, silent=False):
         try:
-            res = api_json("GET", self.server_url("/elizabeth/admin/licenses"), None, self.admin_var.get().strip())
+            res = api_json("GET", self.server_url("/aztlacoin/admin/licenses"), None, self.admin_var.get().strip())
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "Liste alinamadi")
             self.licenses_cache = res.get("licenses") or []
@@ -825,7 +830,7 @@ class ElizabethPanel(tk.Tk):
             new_key = new_key.strip()
             if not new_key:
                 raise RuntimeError("Key bos olamaz")
-            res = api_json("POST", self.server_url("/elizabeth/admin/license/key"), {"license_id": lic.get("id", ""), "key": new_key}, self.admin_var.get().strip())
+            res = api_json("POST", self.server_url("/aztlacoin/admin/license/key"), {"license_id": lic.get("id", ""), "key": new_key}, self.admin_var.get().strip())
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "Key guncellenemedi")
             self.refresh_licenses(silent=True)
@@ -846,7 +851,7 @@ class ElizabethPanel(tk.Tk):
                 payload["multi_account"] = bool(multi_account)
             if reset_account:
                 payload["reset_account"] = True
-            res = api_json("POST", self.server_url("/elizabeth/admin/license/toggle"), payload, self.admin_var.get().strip())
+            res = api_json("POST", self.server_url("/aztlacoin/admin/license/toggle"), payload, self.admin_var.get().strip())
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "Guncellenemedi")
             self.refresh_licenses(silent=True)
@@ -860,7 +865,7 @@ class ElizabethPanel(tk.Tk):
             lic = self.get_selected_license()
             if not lic:
                 return
-            res = api_json("POST", self.server_url("/elizabeth/admin/license/tamper-clear"), {"license_id": lic.get("id", "")}, self.admin_var.get().strip())
+            res = api_json("POST", self.server_url("/aztlacoin/admin/license/tamper-clear"), {"license_id": lic.get("id", "")}, self.admin_var.get().strip())
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "F12 temizlenemedi")
             self.refresh_licenses(silent=True)
@@ -876,7 +881,7 @@ class ElizabethPanel(tk.Tk):
                 return
             if not messagebox.askyesno("Sil", f"{lic.get('name') or 'Lisans'} silinsin mi?"):
                 return
-            res = api_json("POST", self.server_url("/elizabeth/admin/license/delete"), {"license_id": lic.get("id", "")}, self.admin_var.get().strip())
+            res = api_json("POST", self.server_url("/aztlacoin/admin/license/delete"), {"license_id": lic.get("id", "")}, self.admin_var.get().strip())
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "Silinemedi")
             self.refresh_licenses(silent=True)
@@ -887,7 +892,7 @@ class ElizabethPanel(tk.Tk):
 
     def health_check(self):
         try:
-            res = api_json("GET", self.server_url("/elizabeth/health"), None, "")
+            res = api_json("GET", self.server_url("/aztlacoin/health"), None, "")
             self.log_line("Health: " + json.dumps(res, ensure_ascii=False))
             messagebox.showinfo("Health", json.dumps(res, ensure_ascii=False, indent=2))
         except Exception as exc:
@@ -932,5 +937,5 @@ class ElizabethPanel(tk.Tk):
 
 
 if __name__ == "__main__":
-    ElizabethPanel().mainloop()
+    AztlaCoinPanel().mainloop()
 

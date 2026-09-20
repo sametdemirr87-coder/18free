@@ -19,9 +19,9 @@ import config
 APP_STATE_KEY = "minerbytsfree_runtime"
 BOT_BUNDLE_KEY = "minerbytsfree_bot_bundle"
 FLASH_BOT_BUNDLE_KEY = "zuncia_bot_bundle"
-ELIZABETH_BOT_BUNDLE_KEY = "elizabeth_bot_bundle"
+AZTLACOIN_BOT_BUNDLE_KEY = "aztlacoin_bot_bundle"
 FLASH_APP_KEY = "zuncia"
-ELIZABETH_APP_KEY = "elizabeth"
+AZTLACOIN_APP_KEY = "aztlacoin"
 
 app = FastAPI(title=config.APP_NAME)
 app.add_middleware(
@@ -47,7 +47,7 @@ RUNTIME_STATE: dict[str, Any] = {
         "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
         "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
     },
-    ELIZABETH_APP_KEY: {
+    AZTLACOIN_APP_KEY: {
         "licenses": [],
         "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
         "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
@@ -112,16 +112,16 @@ def app_state(app_key: str = "minerbyts") -> dict[str, Any]:
     ensure_shapes()
     if app_key == FLASH_APP_KEY:
         return RUNTIME_STATE[FLASH_APP_KEY]
-    if app_key == ELIZABETH_APP_KEY:
-        return RUNTIME_STATE[ELIZABETH_APP_KEY]
+    if app_key == AZTLACOIN_APP_KEY:
+        return RUNTIME_STATE[AZTLACOIN_APP_KEY]
     return RUNTIME_STATE
 
 
 def app_label(app_key: str = "minerbyts") -> str:
     if app_key == FLASH_APP_KEY:
         return "zuncia"
-    if app_key == ELIZABETH_APP_KEY:
-        return "elizabeth"
+    if app_key == AZTLACOIN_APP_KEY:
+        return "aztlacoin"
     return "minerbyts"
 
 
@@ -483,14 +483,14 @@ def flash_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None 
     return admin_bot_upload_for_app(payload, x_admin_token, FLASH_APP_KEY)
 
 
-@app.get("/elizabeth/health")
-def elizabeth_health() -> dict[str, Any]:
+@app.get("/aztlacoin/health")
+def aztlacoin_health() -> dict[str, Any]:
     ensure_shapes()
-    state = app_state(ELIZABETH_APP_KEY)
+    state = app_state(AZTLACOIN_APP_KEY)
     bundle = state.get("bot_bundle") or {}
     return {
         "success": True,
-        "project": "elizabeth",
+        "project": "aztlacoin",
         "status": RUNTIME_STATE.get("status", "unknown"),
         "time": utc_now(),
         "supabase": bool(SUPABASE),
@@ -504,23 +504,23 @@ def elizabeth_health() -> dict[str, Any]:
     }
 
 
-@app.post("/elizabeth/api/auth")
-def elizabeth_api_auth(payload: AuthPayload) -> dict[str, Any]:
-    return api_auth_for_app(payload, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/api/auth")
+def aztlacoin_api_auth(payload: AuthPayload) -> dict[str, Any]:
+    return api_auth_for_app(payload, AZTLACOIN_APP_KEY)
 
 
-@app.post("/elizabeth/api/heartbeat")
-def elizabeth_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
-    return api_heartbeat_for_app(payload, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/api/heartbeat")
+def aztlacoin_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
+    return api_heartbeat_for_app(payload, AZTLACOIN_APP_KEY)
 
 
-@app.post("/elizabeth/api/tamper/report")
-def elizabeth_api_tamper_report(payload: TamperPayload) -> dict[str, Any]:
-    return api_tamper_report_for_app(payload, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/api/tamper/report")
+def aztlacoin_api_tamper_report(payload: TamperPayload) -> dict[str, Any]:
+    return api_tamper_report_for_app(payload, AZTLACOIN_APP_KEY)
 
 
-@app.get("/elizabeth/api/tamper/report.gif")
-def elizabeth_api_tamper_report_beacon(
+@app.get("/aztlacoin/api/tamper/report.gif")
+def aztlacoin_api_tamper_report_beacon(
     token: str | None = None,
     license_key: str | None = None,
     client_id: str | None = None,
@@ -541,57 +541,57 @@ def elizabeth_api_tamper_report_beacon(
         source=source,
         page=page,
         user_agent=user_agent,
-    ), ELIZABETH_APP_KEY)
+    ), AZTLACOIN_APP_KEY)
 
 
-@app.get("/elizabeth/api/bot/bundle")
-def elizabeth_api_bot_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
-    return api_bot_bundle_for_app(token, client_id, script_id, account_id, ELIZABETH_APP_KEY)
+@app.get("/aztlacoin/api/bot/bundle")
+def aztlacoin_api_bot_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
+    return api_bot_bundle_for_app(token, client_id, script_id, account_id, AZTLACOIN_APP_KEY)
 
 
-@app.get("/elizabeth/admin/state")
-def elizabeth_admin_state(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+@app.get("/aztlacoin/admin/state")
+def aztlacoin_admin_state(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_admin(x_admin_token)
     ensure_shapes()
-    return {"success": True, "state": app_state(ELIZABETH_APP_KEY)}
+    return {"success": True, "state": app_state(AZTLACOIN_APP_KEY)}
 
 
-@app.get("/elizabeth/admin/licenses")
-def elizabeth_admin_licenses(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+@app.get("/aztlacoin/admin/licenses")
+def aztlacoin_admin_licenses(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_admin(x_admin_token)
     ensure_shapes()
     mark_stale_offline()
-    return {"success": True, "licenses": [sanitize_license(x) for x in app_state(ELIZABETH_APP_KEY).get("licenses", [])]}
+    return {"success": True, "licenses": [sanitize_license(x) for x in app_state(AZTLACOIN_APP_KEY).get("licenses", [])]}
 
 
-@app.post("/elizabeth/admin/license/create")
-def elizabeth_admin_license_create(payload: LicenseCreatePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    return admin_license_create_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/admin/license/create")
+def aztlacoin_admin_license_create(payload: LicenseCreatePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_create_for_app(payload, x_admin_token, AZTLACOIN_APP_KEY)
 
 
-@app.post("/elizabeth/admin/license/toggle")
-def elizabeth_admin_license_toggle(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    return admin_license_toggle_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/admin/license/toggle")
+def aztlacoin_admin_license_toggle(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_toggle_for_app(payload, x_admin_token, AZTLACOIN_APP_KEY)
 
 
-@app.post("/elizabeth/admin/license/key")
-def elizabeth_admin_license_key(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    return admin_license_key_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/admin/license/key")
+def aztlacoin_admin_license_key(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_key_for_app(payload, x_admin_token, AZTLACOIN_APP_KEY)
 
 
-@app.post("/elizabeth/admin/license/delete")
-def elizabeth_admin_license_delete(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    return admin_license_delete_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/admin/license/delete")
+def aztlacoin_admin_license_delete(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_delete_for_app(payload, x_admin_token, AZTLACOIN_APP_KEY)
 
 
-@app.post("/elizabeth/admin/license/tamper-clear")
-def elizabeth_admin_license_tamper_clear(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    return admin_license_tamper_clear_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/admin/license/tamper-clear")
+def aztlacoin_admin_license_tamper_clear(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_tamper_clear_for_app(payload, x_admin_token, AZTLACOIN_APP_KEY)
 
 
-@app.post("/elizabeth/admin/bot/upload")
-def elizabeth_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    return admin_bot_upload_for_app(payload, x_admin_token, ELIZABETH_APP_KEY)
+@app.post("/aztlacoin/admin/bot/upload")
+def aztlacoin_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_bot_upload_for_app(payload, x_admin_token, AZTLACOIN_APP_KEY)
 
 
 def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
@@ -873,12 +873,12 @@ def ensure_shapes() -> None:
     RUNTIME_STATE.setdefault("licenses", [])
     RUNTIME_STATE.setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
     RUNTIME_STATE.setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
-    for app_key in (FLASH_APP_KEY, ELIZABETH_APP_KEY):
+    for app_key in (FLASH_APP_KEY, AZTLACOIN_APP_KEY):
         RUNTIME_STATE.setdefault(app_key, {})
         RUNTIME_STATE[app_key].setdefault("licenses", [])
         RUNTIME_STATE[app_key].setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
         RUNTIME_STATE[app_key].setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
-    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[ELIZABETH_APP_KEY]):
+    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[AZTLACOIN_APP_KEY]):
         for lic in state.get("licenses") or []:
             if not isinstance(lic, dict):
                 continue
@@ -1018,15 +1018,15 @@ def summarize_bot_bundle(app_key: str = "minerbyts") -> dict[str, Any]:
 
 
 def generate_license_key(app_key: str = "minerbyts") -> str:
-    prefix = "ZNC" if app_key == FLASH_APP_KEY else ("ELZ" if app_key == ELIZABETH_APP_KEY else "MBF")
+    prefix = "ZNC" if app_key == FLASH_APP_KEY else ("AZT" if app_key == AZTLACOIN_APP_KEY else "MBF")
     return prefix + "-" + "-".join(secrets.token_hex(2).upper() for _ in range(4))
 
 
 def default_bot_name(app_key: str = "minerbyts") -> str:
     if app_key == FLASH_APP_KEY:
         return "NECUS-ZUNCIA-BOT-2.txt"
-    if app_key == ELIZABETH_APP_KEY:
-        return "bot147.txt"
+    if app_key == AZTLACOIN_APP_KEY:
+        return "botazalt.txt"
     return "botfree.txt"
 
 
@@ -1079,10 +1079,10 @@ def load_bot_bundle() -> None:
         rows = result.data or []
         if rows and isinstance(rows[0].get("value"), dict):
             RUNTIME_STATE[FLASH_APP_KEY]["bot_bundle"] = rows[0]["value"]
-        result = SUPABASE.table("app_state").select("value").eq("key", ELIZABETH_BOT_BUNDLE_KEY).limit(1).execute()
+        result = SUPABASE.table("app_state").select("value").eq("key", AZTLACOIN_BOT_BUNDLE_KEY).limit(1).execute()
         rows = result.data or []
         if rows and isinstance(rows[0].get("value"), dict):
-            RUNTIME_STATE[ELIZABETH_APP_KEY]["bot_bundle"] = rows[0]["value"]
+            RUNTIME_STATE[AZTLACOIN_APP_KEY]["bot_bundle"] = rows[0]["value"]
         RUNTIME_STATE.pop("bot_storage_error", None)
     except Exception as exc:
         RUNTIME_STATE["bot_storage_error"] = str(exc)
@@ -1105,11 +1105,11 @@ def save_state(force: bool = False) -> None:
     flash_bot.pop("content", None)
     flash_state["bot_bundle"] = flash_bot
     payload[FLASH_APP_KEY] = flash_state
-    elizabeth_state = dict(payload.get(ELIZABETH_APP_KEY) or {})
-    elizabeth_bot = dict(elizabeth_state.get("bot_bundle") or {})
-    elizabeth_bot.pop("content", None)
-    elizabeth_state["bot_bundle"] = elizabeth_bot
-    payload[ELIZABETH_APP_KEY] = elizabeth_state
+    aztlacoin_state = dict(payload.get(AZTLACOIN_APP_KEY) or {})
+    aztlacoin_bot = dict(aztlacoin_state.get("bot_bundle") or {})
+    aztlacoin_bot.pop("content", None)
+    aztlacoin_state["bot_bundle"] = aztlacoin_bot
+    payload[AZTLACOIN_APP_KEY] = aztlacoin_state
     save_app_state(APP_STATE_KEY, payload, "storage_error")
 
 
@@ -1118,8 +1118,8 @@ def save_bot_bundle(force: bool = False, app_key: str = "minerbyts") -> None:
         return
     if app_key == FLASH_APP_KEY:
         save_app_state(FLASH_BOT_BUNDLE_KEY, RUNTIME_STATE[FLASH_APP_KEY].get("bot_bundle") or {}, "flash_bot_storage_error")
-    elif app_key == ELIZABETH_APP_KEY:
-        save_app_state(ELIZABETH_BOT_BUNDLE_KEY, RUNTIME_STATE[ELIZABETH_APP_KEY].get("bot_bundle") or {}, "elizabeth_bot_storage_error")
+    elif app_key == AZTLACOIN_APP_KEY:
+        save_app_state(AZTLACOIN_BOT_BUNDLE_KEY, RUNTIME_STATE[AZTLACOIN_APP_KEY].get("bot_bundle") or {}, "aztlacoin_bot_storage_error")
     else:
         save_app_state(BOT_BUNDLE_KEY, RUNTIME_STATE.get("bot_bundle") or {}, "bot_storage_error")
 
@@ -1138,7 +1138,7 @@ def save_app_state(key: str, value: dict[str, Any], error_key: str) -> None:
 def mark_stale_offline() -> None:
     now = time.time()
     changed = False
-    for state in (RUNTIME_STATE, RUNTIME_STATE.get(FLASH_APP_KEY) or {}, RUNTIME_STATE.get(ELIZABETH_APP_KEY) or {}):
+    for state in (RUNTIME_STATE, RUNTIME_STATE.get(FLASH_APP_KEY) or {}, RUNTIME_STATE.get(AZTLACOIN_APP_KEY) or {}):
         for lic in state.get("licenses") or []:
             seen = parse_time(lic.get("last_seen_at"))
             if lic.get("online") and seen and now - seen > 120:
