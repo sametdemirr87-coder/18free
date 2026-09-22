@@ -747,12 +747,16 @@ def admin_license_delete_for_app(payload: dict[str, Any], x_admin_token: str | N
 
 def api_tamper_report_for_app(payload: TamperPayload, app_key: str) -> dict[str, Any]:
     ensure_shapes()
+    if app_key == FLASH_APP_KEY and payload.source != "loader_keydown_v2":
+        # Legacy loaders mislabeled geometry detections as bot_keydown. They
+        # cannot prove a key press and must never permanently disable a license.
+        return {"success": True, "ignored": True, "reason": "legacy_unverified_signal", "loader_update_required": True}
     lic = find_license_by_session(payload.token, app_key)
     if not lic:
         lic = find_license_by_key(payload.license_key, app_key)
     if not lic:
         lic = find_license_by_client_script(payload.client_id, payload.script_id, app_key)
-    if not lic:
+    if not lic and app_key != FLASH_APP_KEY:
         lic = find_recent_online_license_for_tamper(payload, app_key)
     if not lic:
         app_state(app_key)["last_tamper_miss"] = {

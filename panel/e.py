@@ -32,7 +32,7 @@ DEFAULT_SETTINGS = {
 CLIENT_TEMPLATE = r'''// ==UserScript==
 // @name         __CLIENT_NAME__
 // @namespace    nexus.zuncia.loader
-// @version      1.0.0
+// @version      1.0.1
 // @description  Nexus Zuncia Bot secure loader
 // @match        https://zuncia.com/game/*
 // @grant        GM_xmlhttpRequest
@@ -137,7 +137,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             script_id: SCRIPT_ID,
             account_id: auth.account_id || collectAccountId(),
             reason: 'f12',
-            source: source || 'bot_keydown',
+            source: extra.source || source || 'bot_keydown',
             page: location.href,
             user_agent: navigator.userAgent
         };
@@ -169,7 +169,6 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     function installSecurityShortcuts() {
         if (window.__NEXUS_ZUNCIA_SECURITY_KEYS__) return;
         window.__NEXUS_ZUNCIA_SECURITY_KEYS__ = true;
-        let normalWindowGap = null;
         const lock = (source, event) => {
             try {
                 if (event) {
@@ -185,33 +184,17 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             });
             return false;
         };
-        const devtoolsLooksOpen = () => {
-            const widthGap = Math.max(0, Math.abs((window.outerWidth || 0) - (window.innerWidth || 0)));
-            const heightGap = Math.max(0, Math.abs((window.outerHeight || 0) - (window.innerHeight || 0)));
-            if (!normalWindowGap) normalWindowGap = { width: widthGap, height: heightGap };
-            const extraWidth = widthGap - normalWindowGap.width;
-            const extraHeight = heightGap - normalWindowGap.height;
-            return extraWidth > 180 || extraHeight > 180 || widthGap > 320 || heightGap > 320;
-        };
+        // Window geometry is not keyboard evidence (zoom, DPI, sidebars, minimize).
         window.addEventListener('keydown', (event) => {
+            if (!event.isTrusted || event.repeat) return;
             const key = String(event.key || '').toLowerCase();
             const code = String(event.code || '').toLowerCase();
             const devCombo = event.ctrlKey && event.shiftKey && ['i', 'j', 'c'].includes(key);
             const viewSource = event.ctrlKey && key === 'u';
             if (key === 'f12' || code === 'f12' || devCombo || viewSource) {
-                return lock('loader_keydown', event);
+                return lock('loader_keydown_v2', event);
             }
         }, true);
-        setTimeout(() => {
-            try {
-                if (devtoolsLooksOpen()) lock('loader_devtools_open');
-            } catch(e) {}
-        }, 1200);
-        setInterval(() => {
-            try {
-                if (devtoolsLooksOpen()) lock('loader_devtools_watch');
-            } catch(e) {}
-        }, 1500);
     }
 
     window.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;

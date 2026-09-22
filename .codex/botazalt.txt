@@ -1,0 +1,909 @@
+// ==UserScript==
+// @name         Nexus Bot • AztlaCoin
+// @namespace    nexus.aztlacoin.bot
+// @version      4.2.2
+// @description  Nexus Bot Ultra: görev odaklı oyun planı, otomatik süre, ayarlanabilir çalışma ve dinlenme, yüzen kontrol panelleri.
+// @match        https://aztlacoin.online/*
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  if (window.top !== window.self || document.getElementById('nxaz-host')) return;
+
+  const SUPABASE_BASE = 'https://zpgazgmkxafqnafeikna.supabase.co/rest/v1/rpc';
+  const API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpwZ2F6Z21reGFmcW5hZmVpa25hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4OTAxODMsImV4cCI6MjA4MzQ2NjE4M30.ED1CvwNfFTu3KAN8Hkjog26NGou_Y1wftVp0a1eicNM';
+  const LOGO_URL = 'https://aztlacoin.online/__l5e/assets-v1/84c68aef-d0d7-4e8d-9ffa-dd7cf746ab4d/logo.png';
+  const STORE_KEY = 'nexus_aztla_v25';
+
+  // curl payloadlarında p_game_name bu ID'leri kullanır
+  const GAMES = [
+    { id: 'puzzle', name: 'Crypto 2048', defaultTarget: 400 },
+    { id: 'clicker', name: 'Miner Clicker', defaultTarget: 80 },
+    { id: 'memory', name: 'Memory Hash', defaultTarget: 100 },
+    { id: 'math', name: 'Hash Rush', defaultTarget: 120 },
+    { id: 'catch', name: 'Coin Catch', defaultTarget: 100 },
+    { id: 'blockbreaker', name: 'Block Breaker', defaultTarget: 90 },
+    { id: 'ufo', name: 'UFO Escape', defaultTarget: 110 },
+    { id: 'match3', name: 'Crypto Match 3', defaultTarget: 150 }
+  ];
+
+  let state = loadState();
+  const prefs = state.prefs = {
+    autoTime:true, games:{}, gapMin:5, gapMax:12, smart:true,
+    restEnabled:false, workMin:2, workMax:4, restMin:0.5, restMax:1,
+    ...(state.prefs || {})
+  };
+  let loopActive = false, workUntil = 0;
+  const selectionHistory = new Map(), retryAfter = {};
+  let selectionNumber = 0, lastSelectedGame = '';
+  let cooldowns = {}, cooldownKnown = false, cooldownLoading = null;
+  const cooldownWindows = new Map();
+  let activeGameId = '', activeSeconds = 0;
+  let isRunning = false;
+  let isPlaying = false;
+  let activeTimer = null;
+  let countdownTotal = 0;
+  let countdownResolve = null;
+  let missionRows = [], missionTab = 'daily', missionLoading = false;
+  const claiming = new Set();
+  let autoClaimBusy = false, missionsFresh = false;
+  let missionOwner = '';
+  let ui = {};
+
+  function loadState() {
+    try {
+      return { x: 20, y: 70, logs: [], ...JSON.parse(localStorage.getItem(STORE_KEY) || '{}') };
+    } catch (_) {
+      return { x: 20, y: 70, logs: [] };
+    }
+  }
+
+  function saveState() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (_) {}
+  }
+
+  function randInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  function sleep(ms) {
+    return new Promise(res => setTimeout(res, ms));
+  }
+
+  function log(msg, type = 'sys') {
+    const time = new Date().toLocaleTimeString('tr-TR', { hour12: false });
+    state.logs.push({ t: time, msg, type });
+    state.logs = state.logs.slice(-60);
+    saveState();
+    if (ui.logs) {
+      const row = document.createElement('div');
+      row.className = `nx-log nx-${type}`;
+      const stamp = document.createElement('span');
+      stamp.textContent = time + ' ';
+      const symbol = document.createElement('b');
+      symbol.className = 'log-symbol';
+      symbol.textContent = ({ok:'✓',play:'▶',warn:'!',err:'×',sys:'◆'})[type] || '◆';
+      const body = document.createElement('span');
+      body.className = 'log-message'; body.textContent = String(msg);
+      row.append(symbol, stamp, body);
+      ui.logs.prepend(row);
+      while (ui.logs.children.length > 60) ui.logs.lastChild.remove();
+    }
+  }
+
+  // Tarayıcıdaki aktif Supabase JWT Access Token'ı çeker
+  function getBearerToken() {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) || '';
+        if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
+          const item = JSON.parse(localStorage.getItem(key) || '{}');
+          if (item.access_token) return item.access_token;
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  async function callSupabaseRpc(fnName, payload) {
+    const token = getBearerToken();
+    if (!token) {
+      log('Supabase Bearer token bulunamadı! Lütfen giriş yapın.', 'err');
+      throw new Error('No Bearer Token');
+    }
+
+    const res = await fetch(`${SUPABASE_BASE}/${fnName}`, {
+      method: 'POST',
+      headers: {
+        'accept': '*/*',
+        'apikey': API_KEY,
+        'authorization': `Bearer ${token}`,
+        'content-profile': 'public',
+        'content-type': 'application/json',
+        'x-client-info': 'supabase-js-web/2.90.1'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errTxt = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errTxt}`);
+    }
+    return await res.json();
+  }
+
+  // --- Ortak Oyun Yürütücüsü (Manuel PLAY ve Otomatik START burayı kullanır) ---
+  async function executeGameFlow(game) {
+    if (isPlaying) {
+      log('Hali hazırda çalışan bir oturum var.', 'warn');
+      return;
+    }
+    if (Math.max(cooldowns[game.id] || 0, retryAfter[game.id] || 0) > Date.now()) { log(game.name + ' · Bekleme süresi devam ediyor.', 'warn'); return; }
+    isPlaying = true; activeGameId = game.id; renderCooldowns();
+    updateStatus('Starting', game.name);
+
+    try {
+      // 1. Supabase: start_game_session_secure
+      log(`Oyun başlatılıyor · ${game.name}`, 'play');
+      const startRes = await callSupabaseRpc('start_game_session_secure', {
+        p_game_name: game.id
+      });
+
+      if (!startRes || !startRes.success) {
+        throw new Error(startRes?.message || 'Session başlatılamadı');
+      }
+
+      const { session_id, nonce, target, min_duration } = startRes;
+      log(`Oturum açıldı · ${game.name} · Hedef skor: ${target}`, 'ok');
+
+      // Sunucudan öğrenilen süre veya kullanıcı aralığı; sunucu alt sınırı korunur.
+      const waitSeconds = chooseDuration(game, startRes);
+
+      updateStatus('Playing', `${game.name} (${waitSeconds}s)`);
+      log(`Oynanıyor... ${waitSeconds} saniye bekleniyor.`, 'play');
+      await runCountdown(waitSeconds, game.name);
+
+      // 3. Supabase: claim_game_session_secure
+      const safeScore = (target || game.defaultTarget) + randInt(5, 15);
+      updateStatus('Claiming', game.name);
+      log(`Oyun tamamlanıyor · ${game.name} · Skor: ${safeScore}`, 'sys');
+
+      const claimRes = await callSupabaseRpc('claim_game_session_secure', {
+        p_session_id: session_id,
+        p_nonce: nonce,
+        p_score: safeScore
+      });
+
+      if (claimRes && claimRes.success) {
+        log(`Oyun bitti · ${game.name} · +${claimRes.power_earned} Power · Seviye ${claimRes.new_level}`, 'ok');
+        await recordGameResult(game, claimRes);
+      } else {
+        retryAfter[game.id] = Date.now() + 60000;
+        log(game.name + ' · ' + (claimRes?.error === 'Target not reached' ? 'Hedef tamamlanmadı; ödül alınamadı.' : 'Oturum onaylanmadı; ödül alınamadı.'), 'warn');
+      }
+
+    } catch (err) {
+      retryAfter[game.id] = Date.now() + 60000;
+      log(`Hata: ${err.message}`, 'err');
+    } finally {
+      isPlaying = false; activeGameId = '';
+      await refreshCooldowns();
+      clearCountdown();
+      if (!isRunning) updateStatus('Idle', 'Hazır');
+    }
+  }
+
+  // --- Zamanlayıcı ve Durum Kontrolleri ---
+  function runCountdown(sec, label) {
+    clearCountdown();
+    countdownTotal = Math.max(1, sec);
+    const deadline = Date.now() + sec * 1000;
+    return new Promise(resolve => {
+      countdownResolve = resolve;
+      const tick = () => {
+        const left = Math.max(0, (deadline - Date.now()) / 1000);
+        renderTimer(left, label);
+        if (left <= 0) clearCountdown();
+      };
+      activeTimer = setInterval(tick, 100);
+      tick();
+    });
+  }
+  function clearCountdown() {
+    clearInterval(activeTimer);
+    activeTimer = null;
+    const resolve = countdownResolve;
+    countdownResolve = null;
+    renderTimer(0, '');
+    if (resolve) resolve();
+  }
+  function renderTimer(left, label) {
+    if (!ui.timer) return;
+    const seconds = Math.max(0, Math.ceil(left));
+    const text = String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
+    activeSeconds = isPlaying ? seconds : 0;
+    renderCooldowns();
+    ui.timer.textContent = text;
+    ui.timerStat.textContent = left > 0 ? text : 'Hazır';
+    ui.clock.hidden = !(isPlaying && left > 0);
+    ui.clock.closest('.status-box').hidden = ui.clock.hidden;
+    ui.clock.classList.toggle('live', isPlaying && left > 0);
+    ui.clock.style.setProperty('--hand', (left * 6) + 'deg');
+    ui.clock.style.setProperty('--minute', (left / 10) + 'deg');
+    ui.clock.style.setProperty('--p', (left > 0 ? left / Math.max(1, countdownTotal) * 100 : 0) + '%');
+    if (label) ui.substatus.textContent = label;
+  }
+
+  function updateStatus(main, sub = '') {
+    if (ui.status) ui.status.textContent = main;
+    if (ui.statusMirror) ui.statusMirror.textContent = main;
+    if (ui.substatus) ui.substatus.textContent = sub;
+  }
+
+  // --- Otomatik Döngü (START Botu) ---
+  async function botLoop() {
+    loopActive = true;
+    try {
+      log('Bot başlatıldı · Görev planı hazırlanıyor.', 'ok');
+      await Promise.all([missionPulse(), refreshCooldowns()]);
+      workUntil = Date.now() + randomHours('work');
+      while (isRunning) {
+        if (prefs.restEnabled && Date.now() >= workUntil) {
+          const seconds = randomHours('rest') / 1000;
+          updateStatus('Dinleniyor', 'Planlı mola');
+          log('Planlı dinlenme başladı · ' + (seconds / 3600).toFixed(2) + ' saat', 'sys');
+          await runCountdown(seconds, 'Planlı dinlenme');
+          workUntil = Date.now() + randomHours('work');
+          if (!isRunning) break;
+        }
+        const game = selectGame();
+        if (!game) {
+          const next = Math.min(...GAMES.map(g => Math.max(cooldowns[g.id] || 0, retryAfter[g.id] || 0)).filter(end => end > Date.now()));
+          log('Tüm oyunlar beklemede · En yakın oyun bekleniyor.', 'sys');
+          await runCountdown(Number.isFinite(next) ? Math.min(60, Math.max(1, Math.ceil((next - Date.now()) / 1000))) : 5, 'Oyun bekleme süresi');
+          if (isRunning) await refreshCooldowns();
+          continue;
+        }
+        await executeGameFlow(game);
+        if (!isRunning) break;
+        const rest = randInt(prefs.gapMin, prefs.gapMax);
+        updateStatus('Geçiş', rest + ' saniye');
+        await runCountdown(rest, 'Sonraki oyun');
+      }
+    } catch (err) { log('Bot durdu · ' + err.message, 'err'); }
+    finally {
+      isRunning = false; loopActive = false;
+      ui.toggleBtn.textContent = '▶ START';
+      ui.toggleBtn.classList.remove('running');
+      updateStatus('Stopped', 'Durduruldu');
+    }
+  }
+  function toggleBot() {
+    if (!isRunning && (isPlaying || loopActive)) { log('Aktif işlem tamamlanıyor. Lütfen bekleyin.', 'warn'); return; }
+    isRunning = !isRunning;
+    animateTitle(isRunning);
+    ui.toggleBtn.textContent = isRunning ? '■ STOP' : '▶ START';
+    ui.toggleBtn.classList.toggle('running', isRunning);
+    if (isRunning) botLoop();
+    else {
+      if (!isPlaying) clearCountdown();
+      updateStatus('Stopped', isPlaying ? 'Aktif oturum tamamlanıyor…' : 'Durduruldu');
+      log('Durdurma istendi · Yeni oyun açılmayacak.', 'warn');
+    }
+  }
+  function randomHours(kind) {
+    return (prefs[kind + 'Min'] + Math.random() * (prefs[kind + 'Max'] - prefs[kind + 'Min'])) * 3600000;
+  }
+  function missionTarget(m) {
+    let target = m.requirement_target;
+    if (target?.startsWith('rotating_')) {
+      const now = new Date();
+      const day = Math.floor((Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()) - Date.UTC(now.getUTCFullYear(),0,0)) / 86400000);
+      target = ['clicker','memory','math','puzzle','ufo','catch','blockbreaker','match3'][(day + (parseInt(target.split('_')[1]) || 1)) % 8];
+    }
+    return target;
+  }
+  function selectGame() {
+    const available = GAMES.filter(game => Math.max(cooldowns[game.id] || 0, retryAfter[game.id] || 0) <= Date.now());
+    if (!available.length) return null;
+    const missionIds = new Set();
+    if (prefs.smart && missionsFresh) {
+      for (const row of missionRows) {
+        if (row.available && !row.is_completed && !row.is_claimed &&
+            (!row.reset_at || Date.parse(row.reset_at) > Date.now()) &&
+            ['win_game','reach_level'].includes(row.mission.requirement_type) &&
+            Number(row.mission.requirement_value) > Number(row.estimated ?? row.progress ?? 0)) {
+          missionIds.add(missionTarget(row.mission));
+        }
+      }
+    }
+    const priority = available.filter(g => missionIds.has(g.id));
+    const other = available.filter(g => !missionIds.has(g.id));
+    // 60/40 applies to eligible groups, not to each individual mission row.
+    let pool = priority.length && other.length ? (Math.random() < 0.60 ? priority : other) : available;
+    const different = pool.filter(g => g.id !== lastSelectedGame);
+    if (different.length) pool = different;
+    else if (available.length > 1) pool = available.filter(g => g.id !== lastSelectedGame);
+    // Least-recently selected within each group prevents starvation of other games.
+    const oldest = Math.min(...pool.map(g => selectionHistory.get(g.id) || 0));
+    pool = pool.filter(g => (selectionHistory.get(g.id) || 0) === oldest);
+    const game = pool[Math.floor(Math.random() * pool.length)];
+    selectionHistory.set(game.id, ++selectionNumber);
+    lastSelectedGame = game.id;
+    return game;
+  }
+  async function recordGameResult(game, result) {
+    if (!missionsFresh) return;
+    let reached = false;
+    for (const row of missionRows) {
+      if (!row.available || row.is_completed || row.is_claimed) continue;
+      const m = row.mission, target = missionTarget(m);
+      if (m.requirement_type === 'total_wins' || (m.requirement_type === 'win_game' && target === game.id))
+        row.estimated = Number(row.estimated ?? row.progress ?? 0) + 1;
+      else if (m.requirement_type === 'reach_level' && target === game.id)
+        row.estimated = Math.max(Number(row.progress) || 0, Number(result.new_level) || 0);
+      if (row.estimated >= Number(m.requirement_value)) reached = true;
+    }
+    renderMissions();
+    if (reached) { log('Görev hedefi kontrol ediliyor · Sunucu doğrulaması', 'sys'); await missionPulse(); }
+  }
+  function chooseDuration(game, response) {
+    const time = Number(response.time_limit);
+    const minimum = Math.max(1, Number(response.min_duration) || 1);
+    const entry = prefs.games[game.id] || {min:20,max:40};
+    if (prefs.autoTime) {
+      if (!Number.isFinite(time) || time < minimum) throw new Error('Sunucu geçerli oyun süresi döndürmedi. Auto Süre kapatılarak manuel aralık kullanılabilir.');
+      const level = Math.max(1, Number(response.level) || 1);
+      const difficulty = Math.min(1, (level - 1) / 29);
+      const lowerRatio = 0.45 + 0.40 * difficulty;
+      entry.min = Math.min(time, Math.max(Math.ceil(minimum + 1), Math.ceil(time * lowerRatio)));
+      entry.max = Math.floor(time); entry.learned = true; entry.serverMin = minimum; entry.level = level;
+      prefs.games[game.id] = entry; saveState(); renderSettings();
+    }
+    const floor = Math.ceil(minimum);
+    const ceiling = Number.isFinite(time) && time >= floor ? Math.floor(time) : Math.max(floor, entry.max);
+    const low = Math.min(ceiling, Math.max(floor, entry.min));
+    const high = Math.min(ceiling, Math.max(low, entry.max));
+    return randInt(low, high);
+  }
+
+
+
+  function animateTitle() {
+    const title = ui.root.querySelector('.title');
+    const heading = title.querySelector('b');
+    if (!heading.querySelector('.letter')) {
+      const text = heading.textContent;
+      heading.textContent = '';
+      heading.setAttribute('aria-label', text);
+      [...text].forEach((letter,index) => {
+        const span = document.createElement('i');
+        span.className = 'letter'; span.style.setProperty('--i', index);
+        span.textContent = letter === ' ' ? '\u00a0' : letter;
+        span.setAttribute('aria-hidden','true');
+        heading.appendChild(span);
+      });
+      const beam = document.createElement('div');
+      beam.className = 'title-beam'; beam.setAttribute('aria-hidden','true');
+      title.appendChild(beam);
+      const sparks = document.createElement('div');
+      sparks.className = 'title-sparks'; sparks.setAttribute('aria-hidden','true');
+      for(let i=0;i<8;i++) {
+        const spark=document.createElement('i');
+        spark.style.setProperty('--angle', (i*45)+'deg');
+        sparks.appendChild(spark);
+      }
+      title.appendChild(sparks);
+    }
+    title.classList.remove('fire','stopping');
+    void title.offsetWidth;
+    title.classList.add('fire');
+  }
+  async function refreshCooldowns() {
+    if (cooldownLoading) return cooldownLoading;
+    cooldownLoading = (async () => {
+      try {
+        const token = getBearerToken();
+        if (!token) throw new Error('Giriş gerekli.');
+        const part = token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+        const userId = JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4,'='))).sub;
+        if (!userId) throw new Error('Aktif kullanıcı bulunamadı.');
+        const rows = await readTable('game_cooldowns', new URLSearchParams({select:'game_name,cooldown_ends_at',user_id:'eq.'+userId}));
+        if (!Array.isArray(rows)) throw new Error('Bekleme bilgisi alınamadı.');
+        cooldowns = Object.fromEntries(rows.map(row => [row.game_name, Date.parse(row.cooldown_ends_at) || 0]));
+        cooldownKnown = true;
+      } catch (error) {
+        cooldownKnown = false;
+        log('Bekleme bilgisi alınamadı · ' + error.message, 'warn');
+      } finally { renderCooldowns(); }
+    })();
+    try { await cooldownLoading; } finally { cooldownLoading = null; }
+  }
+  function renderCooldowns() {
+    if (!ui.gameList) return;
+    ui.gameList.querySelectorAll('[data-game]').forEach(card => {
+      const id=card.dataset.game, left=Math.max(0, Math.ceil((Math.max(cooldowns[id] || 0, retryAfter[id] || 0) - Date.now())/1000));
+      const playing = activeGameId === id;
+      const remaining = playing ? activeSeconds : left;
+      const text = playing ? 'Oynanıyor' : left ? 'Bekleme' : cooldownKnown ? 'Hazır' : 'Bekleme bilgisi yüklenmedi';
+      const label = card.querySelector('.cooldown');
+      if (label) {
+        const status = label.querySelector('.card-state');
+        const digits = label.querySelector('.card-digits');
+        const clock = remaining > 0 ? String(Math.floor(remaining/60)).padStart(2,'0') + ':' + String(remaining%60).padStart(2,'0') : playing ? '00:00' : '--:--';
+        if (status.textContent !== translate(text)) status.textContent = text;
+        if (digits.textContent !== clock) digits.textContent = clock;
+        label.dataset.mode = playing ? 'playing' : left ? 'cooldown' : 'ready';
+        let fill = 0;
+        if (playing) {
+          fill = (countdownTotal - activeSeconds) / Math.max(1, countdownTotal);
+        } else if (left > 0) {
+          const end = cooldowns[id];
+          let window = cooldownWindows.get(id);
+          if (!window || window.end !== end) {
+            window = {end, duration: Math.max(1, end - Date.now())};
+            cooldownWindows.set(id, window);
+          }
+          fill = (end - Date.now()) / window.duration;
+        } else {
+          cooldownWindows.delete(id);
+        }
+        label.style.setProperty('--fill', Math.max(0, Math.min(1, fill)));
+      }
+      card.querySelector('button').disabled = left>0 || isPlaying || loopActive;
+    });
+  }
+
+  let settingsTab = 'timing';
+  function renderSettings() {
+    if (!ui.root) return;
+    const box = ui.root.getElementById('settingsContent');
+    if (!box) return;
+    const range = (key,title,min,max,disabled=false,step=1) =>
+      '<div class="settings-row"><span class="settings-name">' + escapeHtml(title) + '</span><label>Min<input type="number" data-range="' + key + '" data-side="min" min="' + step + '" max="86400" step="' + step + '" value="' + min + '" ' + (disabled?'disabled':'') + '></label><label>Max<input type="number" data-range="' + key + '" data-side="max" min="' + step + '" max="86400" step="' + step + '" value="' + max + '" ' + (disabled?'disabled':'') + '></label></div>';
+    if (settingsTab === 'timing') {
+      box.innerHTML = '<label class="switch-row"><input type="checkbox" id="autoTime" ' + (prefs.autoTime?'checked':'') + '>Auto Süre</label><p class="settings-note">Süreler saniyedir. Auto Süre, seviyeye göre min/max aralığı oluşturur ve her oyunda bu aralıktan rastgele seçer. Seviye yükseldikçe minimum süre artar. Sunucu sınırları korunur.</p>' +
+        GAMES.map(game => {
+          const entry = prefs.games[game.id] || {min:20,max:40};
+          return range(game.id,game.name, prefs.autoTime && !entry.learned?'':entry.min,prefs.autoTime && !entry.learned?'':entry.max,prefs.autoTime) + (prefs.autoTime && !entry.learned ? '<div class="settings-note">İlk oturumda öğrenilecek.</div>' : '');
+        }).join('') + range('gap','Oyun geçişi (sn)',prefs.gapMin,prefs.gapMax);
+      box.querySelector('#autoTime').onchange = event => { prefs.autoTime=event.target.checked;saveState();renderSettings(); };
+    } else if (settingsTab === 'language') {
+      const english = prefs.language === 'en';
+      box.innerHTML = '<div class="language-picker"><button class="language-toggle" id="languageToggle" aria-expanded="false" aria-controls="languageOptions">' + (english ? 'English' : 'Türkçe') + '<span aria-hidden="true">⌄</span></button><div class="language-catalog" id="languageOptions" hidden><button data-language="tr">Türkçe</button><button data-language="en">English</button></div></div>';
+      const toggle = box.querySelector('#languageToggle');
+      const options = box.querySelector('#languageOptions');
+      toggle.onclick = () => { options.hidden = !options.hidden; toggle.setAttribute('aria-expanded', String(!options.hidden)); };
+      box.querySelectorAll('[data-language]').forEach(button => {
+        button.classList.toggle('selected', (prefs.language || 'tr') === button.dataset.language);
+        button.onclick = () => { prefs.language = button.dataset.language; saveState(); renderSettings(); applyLanguage(); ui.root.getElementById('languageToggle').focus(); };
+      });
+      box.onkeydown = event => {
+        if (event.key === 'Escape') { options.hidden=true; toggle.setAttribute('aria-expanded','false'); toggle.focus(); }
+        if (event.key === 'ArrowDown' && event.target === toggle) { event.preventDefault(); options.hidden=false; toggle.setAttribute('aria-expanded','true'); options.querySelector('button').focus(); }
+      };
+    } else {
+      box.innerHTML = '<label class="switch-row"><input type="checkbox" id="smartMode" ' + (prefs.smart?'checked':'') + '>Görevlere göre oyun seçimi</label><p class="settings-note">START’ta görevler okunur. Oyun galibiyetleri ve seviye hedefleri takip edilir. Hedefe ulaşıldığında sunucudan doğrulanır; satın alma görevleri oyun hedefi sayılmaz.</p><label class="switch-row"><input type="checkbox" id="restEnabled" ' + (prefs.restEnabled?'checked':'') + '>Planlı dinlenme</label>' + range('work','Çalışma (saat)',prefs.workMin,prefs.workMax,false,0.01) + range('rest','Dinlenme (saat)',prefs.restMin,prefs.restMax,false,0.01) + '<p class="settings-note">Her döngüde aralıktan bir süre seçilir. Mola aktif oyundan sonra başlar. STOP molayı iptal eder. Sayfa açık kalmalıdır; yenilemede bot kendiliğinden başlamaz.</p>';
+      box.querySelector('#smartMode').onchange = event => { prefs.smart=event.target.checked;saveState(); };
+      box.querySelector('#restEnabled').onchange = event => { prefs.restEnabled=event.target.checked;workUntil=Date.now()+randomHours('work');saveState(); };
+    }
+    box.querySelectorAll('[data-range]').forEach(input => input.onchange = () => {
+      const key=input.dataset.range, side=input.dataset.side, value=Number(input.value);
+      const isGame=GAMES.some(game=>game.id===key);
+      if (isGame && prefs.autoTime) return;
+      const lower=['work','rest'].includes(key)?0.01:1;
+      if (!Number.isFinite(value) || value<lower || value>86400 || (!['work','rest'].includes(key) && !Number.isInteger(value))) { renderSettings(); return; }
+      const entry=isGame ? (prefs.games[key] || {min:20,max:40}) : {min:prefs[key+'Min'],max:prefs[key+'Max']};
+      entry[side]=value;
+      if(entry.min>entry.max) entry[side==='min'?'max':'min']=value;
+      if(isGame) {entry.learned=false;prefs.games[key]=entry;}
+      else {prefs[key+'Min']=entry.min;prefs[key+'Max']=entry.max;}
+      saveState();renderSettings();
+    });
+  }
+
+
+  const ENGLISH = [["Hedef tamamlanmadı; ödül alınamadı.","Target not completed; no reward received."],["Oturum onaylanmadı; ödül alınamadı.","Session not approved; no reward received."],["Süreler saniyedir. Auto Süre, seviyeye göre min/max aralığı oluşturur ve her oyunda bu aralıktan rastgele seçer. Seviye yükseldikçe minimum süre artar. Sunucu sınırları korunur.","Times are in seconds. Auto Time selects randomly within a level-based range. Higher levels raise the minimum. Server limits are respected."],["START’ta görevler okunur. Oyun galibiyetleri ve seviye hedefleri takip edilir. Hedefe ulaşıldığında sunucudan doğrulanır; satın alma görevleri oyun hedefi sayılmaz.","Tasks load on START. Wins and level targets are tracked and verified with the server when reached. Purchase tasks are not game targets."],["Her döngüde aralıktan bir süre seçilir. Mola aktif oyundan sonra başlar. STOP molayı iptal eder. Sayfa açık kalmalıdır; yenilemede bot kendiliğinden başlamaz.","Each cycle picks a duration from the range. Rest starts after the active game. STOP cancels rest. Keep the page open; reloading does not restart the bot."],["Sunucu geçerli oyun süresi döndürmedi. Auto Süre kapatılarak manuel aralık kullanılabilir.","The server returned no valid duration. Turn off Auto Time to use a manual range."],["Görev hazırlama başarısız; mevcut görevler gösteriliyor.","Task setup failed; showing existing tasks."],["Önceki veriler varsa güncel olmayabilir.","Previously loaded data may be outdated."],["Yenile ile tekrar deneyin.","Use Refresh to try again."],["Görev servisi beklenen listeyi döndürmedi.","The task service returned an unexpected response."],["Görev listesi alınamadı veya bu sekmede görev yok.","Could not load tasks, or this tab has no tasks."],["Aşağıdaki bağlantı durumunu kontrol edip Yenile’ye basın.","Check the connection status below and click Refresh."],["Görevleri görmek için siteye giriş yapın.","Sign in to the website to view tasks."],["Supabase Bearer token bulunamadı! Lütfen giriş yapın.","Session token missing. Please sign in."],["Görev hedefinde doğrular ve hazır ödülleri alır","Verifies reached targets and claims ready rewards"],["Bot başlatıldı · Görev planı hazırlanıyor.","Bot started · Preparing task plan."],["Durdurma istendi · Yeni oyun açılmayacak.","Stop requested · No new games will start."],["Aktif işlem tamamlanıyor. Lütfen bekleyin.","Finishing the active operation. Please wait."],["Aktif oturum tamamlanıyor…","Finishing the active session…"],["Manuel oyun için önce otomasyonu durdurun.","Stop automation before starting a manual game."],["Hali hazırda çalışan bir oturum var.","A session is already running."],["Tüm oyunlar beklemede · En yakın oyun bekleniyor.","All games are on cooldown · Waiting for the next available game."],["İlk oturumda öğrenilecek.","Will be learned during the first session."],["Görev hedefi kontrol ediliyor · Sunucu doğrulaması","Checking task target · Server verification"],["Menü ve işlem günlüğü dili","Menu and activity log language"],["Görevlere göre oyun seçimi","Task-based game selection"],["Nexus Bot menüsünü aç","Open Nexus Bot menu"],["Bekleme bilgisi yüklenmedi","Cooldown data not loaded"],["Bekleme bilgisi alınamadı","Could not load cooldown data"],["Bekleme süresi devam ediyor.","Cooldown is still active."],["Görevler yüklenmeye hazır.","Ready to load tasks."],["Görevler güncelleniyor…","Updating tasks…"],["Görevler yükleniyor…","Loading tasks…"],["Görevler yüklenemedi","Could not load tasks"],["Aktif kullanıcı bulunamadı.","Active user not found."],["Oyun başlatılıyor","Starting game"],["Oturum açıldı","Session opened"],["Hedef skor","Target score"],["Oyun tamamlanıyor","Finishing game"],["Oyun bitti","Game finished"],["Manuel başlatıldı","Manual game started"],["Planlı dinlenme başladı","Scheduled rest started"],["Planlı dinlenme","Scheduled rest"],["Planlı mola","Scheduled break"],["Görev seçimi","Task selection"],["Kalan hedef","Remaining target"],["Ödül alındı!","Reward claimed!"],["Ödül alınamadı.","Could not claim reward."],["Son güncelleme","Last updated"],["Oyun bekleme süresi","Game cooldown"],["Oyun geçişi (sn)","Game transition (sec)"],["Çalışma (saat)","Work (hours)"],["Dinlenme (saat)","Rest (hours)"],["Oyun Süreleri","Game Timing"],["Akıllı Bot","Smart Bot"],["Auto Süre","Auto Time"],["🌐 Dil","🌐 Language"],["Görevleri kapat","Close tasks"],["Ayarları kapat","Close settings"],["Oyunları kapat","Close games"],["İlerleme bekleniyor","Waiting for progress"],["ÖDÜL HAZIR","REWARD READY"],["DEVAM EDİYOR","IN PROGRESS"],["ALINDI","CLAIMED"],["Süresi doldu","Expired"],["Alınıyor…","Claiming…"],["Alındı","Claimed"],["Bekleniyor","Pending"],["Kilitli","Locked"],["(tahmini)","(estimated)"],["Sonraki oyun","Next game"],["Session başlatılamadı","Could not start session"],["Oynanıyor...","Playing..."],["saniye bekleniyor.","seconds remaining."],["Giriş gerekli.","Sign-in required."],["Bot durdu","Bot stopped"],["Claim yanıtı","Claim response"],["Oynanıyor","Playing"],["Dinleniyor","Resting"],["Durduruldu","Stopped"],["Geçiş","Transition"],["Bekleme","Cooldown"],["Hazır","Ready"],["hazır.","ready."],["Seviye","Level"],["Skor","Score"],["Hata","Error"],["AÇIK","ON"],["KAPALI","OFF"],["Görevler","Tasks"],["Günlük","Daily"],["Haftalık","Weekly"],["Yenile","Refresh"],["Ayarlar","Settings"],["Küçült","Minimize"],[" saniye"," seconds"],[" saat"," hours"]].sort((a,b)=>b[0].length-a[0].length);
+  const localizedNodes = new WeakMap();
+  const localizedAttributes = new WeakMap();
+  function translate(text) {
+    if (prefs.language !== 'en') return text;
+    let value = text;
+    for (const [source,target] of ENGLISH) value = value.split(source).join(target);
+    return value;
+  }
+  function applyLanguage() {
+    if (!ui.root) return;
+    ui.root.host.lang = prefs.language === 'en' ? 'en' : 'tr';
+    const walker = document.createTreeWalker(ui.root, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node=walker.currentNode;
+      if (node.parentElement?.closest('style,script')) continue;
+      const cached=localizedNodes.get(node);
+      const source=cached && node.nodeValue === cached.rendered ? cached.source : node.nodeValue;
+      const rendered=translate(source);
+      localizedNodes.set(node,{source,rendered});
+      if (node.nodeValue !== rendered) node.nodeValue=rendered;
+    }
+    ui.root.querySelectorAll('[aria-label],[title]').forEach(el => {
+      const cached=localizedAttributes.get(el) || {};
+      for (const name of ['aria-label','title']) {
+        if (!el.hasAttribute(name)) continue;
+        const value=el.getAttribute(name), entry=cached[name];
+        const source=entry && value===entry.rendered ? entry.source : value;
+        const rendered=translate(source);
+        cached[name]={source,rendered};
+        if(value!==rendered) el.setAttribute(name,rendered);
+      }
+      localizedAttributes.set(el,cached);
+    });
+  }
+  function startLocalization() {
+    let queued=false;
+    new MutationObserver(() => {
+      if(queued) return;
+      queued=true;
+      queueMicrotask(()=>{queued=false;applyLanguage();});
+    }).observe(ui.root,{subtree:true,childList:true,characterData:true});
+    applyLanguage();
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  async function readTable(table, query) {
+    const token = getBearerToken();
+    if (!token) throw new Error('Görevleri görmek için siteye giriş yapın.');
+    const response = await fetch(SUPABASE_BASE.replace(/\/rpc$/, '/') + table + '?' + query, {
+      headers: { apikey: API_KEY, authorization: 'Bearer ' + token, accept: 'application/json' }
+    });
+    if (!response.ok) throw new Error('Görevler yüklenemedi (HTTP ' + response.status + ').');
+    return response.json();
+  }
+  async function refreshMissions() {
+    if (missionLoading) return;
+    missionLoading = true;
+    missionsFresh = false;
+    renderMissions();
+    ui.missionMessage.textContent = 'Görevler güncelleniyor…';
+    ui.refresh.disabled = true;
+    try {
+      const token = getBearerToken();
+      if (!token) throw new Error('Görevleri görmek için siteye giriş yapın.');
+      const segment = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      const userId = JSON.parse(atob(segment.padEnd(Math.ceil(segment.length / 4) * 4, '='))).sub;
+      if (!userId) throw new Error('Aktif kullanıcı bulunamadı.');
+      if (missionOwner !== userId) { missionRows = []; missionOwner = userId; }
+      let setupWarning = '';
+      try { await callSupabaseRpc('ensure_user_missions', {}); }
+      catch (error) { setupWarning = 'Görev hazırlama başarısız; mevcut görevler gösteriliyor. '; }
+
+      const [missions, progress] = await Promise.all([
+        readTable('missions', new URLSearchParams({select:'id,name,description,mission_type,requirement_type,requirement_value,requirement_target,reward_type,reward_amount,mission_order',is_active:'eq.true',order:'mission_order.asc'})),
+        readTable('user_missions', new URLSearchParams({select:'id,mission_id,progress,is_completed,is_claimed,reset_at',user_id:'eq.' + userId}))
+      ]);
+      if (!Array.isArray(missions) || !Array.isArray(progress)) throw new Error('Görev servisi beklenen listeyi döndürmedi.');
+      const records = new Map();
+      for (const row of progress) {
+        const previous = records.get(row.mission_id);
+        if (!previous || (Date.parse(row.reset_at) || 0) > (Date.parse(previous.reset_at) || 0)) records.set(row.mission_id, row);
+      }
+      missionRows = missions.map(mission => {
+        const record = records.get(mission.id);
+        return record ? {...record, mission, available:true} : {id:'pending-' + mission.id, mission, available:false, progress:null, is_completed:false, is_claimed:false};
+      }).sort((a,b)=>a.mission.mission_order-b.mission.mission_order);
+      missionsFresh = true;
+      ui.missionMessage.textContent = setupWarning + 'Son güncelleme · ' + new Date().toLocaleTimeString('tr-TR');
+    } catch (err) {
+      missionsFresh = false;
+      ui.missionMessage.textContent = err.message + ' · Yenile ile tekrar deneyin. Önceki veriler varsa güncel olmayabilir.';
+      log(err.message, 'err');
+    } finally {
+      missionLoading = false;
+      ui.refresh.disabled = false;
+      renderMissions();
+    }
+  }
+  async function claimMission(id) {
+    const row = missionRows.find(m => m.id === id);
+    if (!missionsFresh || !row || row.available === false || !row.is_completed || row.is_claimed || claiming.has(id)) return;
+    if (row.reset_at && Date.parse(row.reset_at) <= Date.now()) { await refreshMissions(); return; }
+    claiming.add(id);
+    renderMissions();
+    try {
+      const result = await callSupabaseRpc('claim_mission_reward_secure', {p_user_mission_id:id});
+      if (!result?.success) throw new Error(result?.error || result?.message || 'Ödül alınamadı.');
+      row.is_claimed = true;
+      log(row.mission.name + ' · Ödül alındı!', 'ok');
+      window.dispatchEvent(new Event('balances-updated'));
+      await refreshMissions();
+    } catch (err) {
+      ui.missionMessage.textContent = err.message;
+      log(err.message, 'err');
+    } finally {
+      claiming.delete(id);
+      renderMissions();
+    }
+  }
+  async function missionPulse() {
+    if (autoClaimBusy || missionLoading || claiming.size) return;
+    autoClaimBusy = true;
+    try {
+      await refreshMissions();
+      if (!state.autoClaim || !missionsFresh) return;
+      const ready = missionRows.filter(row => row.available && row.is_completed && !row.is_claimed && (!row.reset_at || Date.parse(row.reset_at) > Date.now())).map(row => row.id);
+      for (const id of ready) {
+        if (!state.autoClaim || !missionsFresh) break;
+        await claimMission(id);
+      }
+    } finally { autoClaimBusy = false; }
+  }
+  function renderMissions() {
+    if (!ui.missionList) return;
+    ui.root.querySelectorAll('[data-tab]').forEach(tab => {
+      const group = missionRows.filter(row => row.mission.mission_type === tab.dataset.tab);
+      tab.textContent = (tab.dataset.tab === 'daily' ? 'Günlük' : 'Haftalık') + ' (' + group.filter(row => row.is_completed).length + '/' + group.length + ')';
+    });
+    const rows = missionRows.filter(row => row.mission.mission_type === missionTab);
+    ui.missionList.innerHTML = rows.length ? rows.map(row => {
+      const m = row.mission;
+      const goal = Math.max(1,Number(m.requirement_value) || 1);
+      const progress = Math.max(0,Number(row.estimated ?? row.progress) || 0);
+      const pct = Math.min(100,progress / goal * 100);
+      const expired = row.reset_at && Date.parse(row.reset_at) <= Date.now();
+      const ready = missionsFresh && row.available !== false && row.is_completed && !row.is_claimed && !expired;
+      let target = m.requirement_target;
+      if (target?.startsWith('rotating_')) {
+        const now = new Date();
+        const day = Math.floor((Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())-Date.UTC(now.getUTCFullYear(),0,0))/86400000);
+        target = ['clicker','memory','math','puzzle','ufo','catch','blockbreaker','match3'][(day+(parseInt(target.split('_')[1]) || 1))%8];
+      }
+      const gameName = GAMES.find(g => g.id === target)?.name;
+      return '<article class="mission ' + (row.is_claimed ? 'claimed' : ready ? 'ready' : '') + '"><div class="card-top"><span class="muted">' + (row.is_claimed?'ALINDI':ready?'ÖDÜL HAZIR':'DEVAM EDİYOR') + '</span><span class="reward">+' + escapeHtml(m.reward_amount) + ' ' + escapeHtml(m.reward_type) + '</span></div><h3>' + escapeHtml(m.name) + '</h3><p>' + escapeHtml(m.description) + (gameName?' · '+escapeHtml(gameName):'') + '</p><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(pct) + '"><i style="width:' + pct + '%"></i></div><div class="card-top"><span class="muted">' + (row.available === false ? 'İlerleme bekleniyor' : progress + ' / ' + goal + ' · %' + Math.round(pct) + (row.estimated != null ? ' (tahmini)' : '')) + '</span><button class="claim" data-claim="' + escapeHtml(row.id) + '" ' + (!ready || claiming.has(row.id)?'disabled':'') + '>' + (claiming.has(row.id)?'Alınıyor…':row.is_claimed?'✓ Alındı':expired?'Süresi doldu':!missionsFresh?'Yenile':row.available === false?'Bekleniyor':ready?'CLAIM ↗':'Kilitli') + '</button></div></article>';
+    }).join('') : '<div class="empty">' + (missionLoading ? 'Görevler yükleniyor…' : 'Görev listesi alınamadı veya bu sekmede görev yok.<br>Aşağıdaki bağlantı durumunu kontrol edip Yenile’ye basın.') + '</div>';
+    ui.missionList.querySelectorAll('[data-claim]').forEach(button => button.onclick = () => claimMission(button.dataset.claim));
+  }
+
+  // --- UI Arayüzü ---
+  function buildUI() {
+    const host = document.createElement('div');
+    host.id = 'nxaz-host';
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: 'open' });
+
+    root.innerHTML = `
+      <style>
+        :host { all: initial; position: fixed; z-index: 2147483647; color: #e8fbff; font: 13px Inter, Segoe UI, Arial, sans-serif; }
+        * { box-sizing: border-box; } button { font: inherit; cursor: pointer; border: 0; }
+        .panel, .game-window { position: fixed; overflow: hidden; border: 1px solid rgba(0,255,204,.26); border-radius: 18px; background: radial-gradient(circle at 15% -15%,rgba(0,255,204,.20),transparent 36%),linear-gradient(145deg,#101722,#05070b 72%); box-shadow: 0 24px 90px rgba(0,0,0,.62),0 0 36px rgba(0,255,204,.10); }
+        .panel { left: ${state.x}px; top: ${state.y}px; width: 374px; }
+        .head { height: 66px; padding: 0 14px; display: flex; align-items: center; gap: 12px; cursor: move; background: linear-gradient(90deg,rgba(5,8,14,.94),rgba(10,18,27,.72)); border-bottom: 1px solid rgba(255,255,255,.08); }
+        .logo { width: 42px; height: 42px; display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(0,255,204,.25); border-radius: 13px; background: #071014; box-shadow: 0 0 22px rgba(0,255,204,.22); }
+        .logo img { width: 34px; height: 34px; object-fit: contain; }.title { display: grid; gap: 3px; }.title b { color: #fff; font-size: 17px; }.title span { color: #00ffcc; font-size: 10px; font-weight: 900; letter-spacing: 1.55px; }.drag-mark { margin-left: auto; color: #7dd3fc; opacity: .72; font-size: 21px; }
+        .body { padding: 13px; display: grid; gap: 11px; }.stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }.stat { min-height: 69px; padding: 10px; display: grid; gap: 7px; border: 1px solid rgba(255,255,255,.08); border-radius: 13px; background: #0c111a; }.stat span { color: #8fa1b8; font-size: 10px; font-weight: 900; text-transform: uppercase; }.stat strong { color: #e6ffff; font-size: 17px; overflow: hidden; text-overflow: ellipsis; }
+        .status-box { padding: 11px; display: flex; align-items: center; gap: 12px; border: 1px solid rgba(0,255,204,.18); border-radius: 15px; background: linear-gradient(135deg,rgba(0,255,204,.09),rgba(14,165,233,.08)); }.status-info { min-width: 0; flex: 1; display: grid; gap: 5px; }.status-info small { color: #8fa1b8; font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; }.status-info strong { overflow: hidden; color: #fff; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }.status-info span { overflow: hidden; color: #67e8f9; font-size: 11px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }.timer-circle { width: 62px; height: 62px; flex: 0 0 62px; display: grid; place-items: center; border-radius: 50%; color: #dff; font: 900 14px/1 Consolas,monospace; background: conic-gradient(#00ffcc var(--p,0%),rgba(255,255,255,.11) 0); box-shadow: inset 0 0 0 7px #09121b,0 0 20px rgba(0,255,204,.16); }
+        .actions { display: grid; grid-template-columns: 1.15fr 1fr; gap: 8px; }.btn { height: 43px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 11px; color: #d8f8ff; font-weight: 950; background: #152033; box-shadow: inset 0 -3px 0 rgba(0,0,0,.22); }.btn-run { background: linear-gradient(100deg,#00f0d0,#0aa6ff); color: #001317; }.btn-run.running { background: linear-gradient(100deg,#ff4d6d,#ff9f1c); color: #1b0900; }.btn:hover, .game-item button:hover { filter: brightness(1.1); }
+        .logs { height: 154px; overflow-y: auto; padding: 8px; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; background: #05070b; font: 11px/1.45 Consolas,monospace; }.nx-log { padding: 5px 1px; border-bottom: 1px dashed rgba(255,255,255,.07); }.nx-log span { color: #64748b; }.nx-ok { color: #5fffc8; }.nx-play { color: #67e8f9; }.nx-warn { color: #ffd166; }.nx-err { color: #ff8b8b; }.nx-sys { color: #bfefff; }
+        .game-window { left: ${Math.max(420, state.x + 396)}px; top: ${state.y}px; width: min(650px,calc(100vw - 26px)); display: none; }.game-window.open { display: block; }.window-head { height: 58px; padding: 0 15px; display: flex; align-items: center; gap: 11px; cursor: move; border-bottom: 1px solid rgba(255,255,255,.08); background: #0b111a; }.window-head strong { display: block; color: #fff; font-size: 17px; }.window-head span { color: #00ffcc; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; }.close { margin-left: auto; width: 32px; height: 32px; border-radius: 10px; color: #dbeafe; font-weight: 900; background: rgba(255,255,255,.08); }.game-list { max-height: min(570px,calc(100vh - 110px)); overflow-y: auto; padding: 14px; display: grid; grid-template-columns: repeat(2,minmax(220px,1fr)); gap: 12px; }.game-item { min-height: 150px; padding: 14px; display: grid; align-content: space-between; gap: 15px; border: 1px solid rgba(255,255,255,.09); border-radius: 15px; background: radial-gradient(circle at 20% 0,rgba(0,240,208,.18),transparent 44%),linear-gradient(180deg,#111827,#080b12); }.game-item span { color: #fff; font-size: 16px; font-weight: 900; }.game-item span::after { content: 'SUPABASE GAME SESSION'; display: block; margin-top: 6px; color: #8fa1b8; font-size: 10px; font-weight: 900; letter-spacing: 1px; }.game-item button { height: 39px; border-radius: 11px; color: #001014; font-weight: 950; background: linear-gradient(100deg,#00e0c7,#0ea5e9); }
+        @media(max-width:650px) { .panel { width: calc(100vw - 22px);  }.game-window { width: calc(100vw - 22px);  }.game-list { grid-template-columns: 1fr; }.stats { grid-template-columns: 1fr 1fr; } }
+
+        /* Nexus Elite 3.0 — shared dark theme for every window */
+        :host{color-scheme:dark;color:#e6eee8}
+        .panel,.game-window{font:13px 'Segoe UI',Arial,sans-serif}.logo{font:600 16px 'Segoe UI',sans-serif;color:#d9d0ab;letter-spacing:-1px}
+        *{scrollbar-width:thin;scrollbar-color:#476356 #0a1113}
+        *::-webkit-scrollbar{width:7px;height:7px}*::-webkit-scrollbar-track{background:#0a1113}*::-webkit-scrollbar-thumb{background:#476356;border:2px solid #0a1113;border-radius:8px}*::-webkit-scrollbar-thumb:hover{background:#83ae94}
+        button:focus-visible{outline:2px solid #d6c58e;outline-offset:3px}button:disabled{opacity:.45;cursor:default}
+        .panel,.game-window{background:radial-gradient(ellipse at 0 0,#29473666,transparent 55%),#0b1216;border-color:#3a5041;box-shadow:0 28px 80px #0009;max-height:calc(100dvh - 16px)}
+        .panel{width:min(390px,calc(100vw - 16px));display:flex;flex-direction:column}.body{overflow:auto;min-height:0;padding:16px;gap:14px}
+        .head,.window-head{background:#0b1418;touch-action:none;user-select:none;flex-shrink:0;cursor:grab}.title b{font-weight:600;letter-spacing:.4px;font-size:19px}.title span,.window-head span{color:#a4bea6;letter-spacing:1.6px;font-size:9px}.logo{border-color:#506c52;box-shadow:none;background:#182720}
+        .stat{background:#121e21;border-color:#263b32}.stat span{color:#8da798}.stat strong{font-weight:600;font-size:16px}.status-box{flex-direction:column-reverse;padding:20px 12px 16px;gap:18px;background:radial-gradient(circle at 50% 20%,#344d3d55,transparent 65%),#0c171a;border-color:#3d5140}.status-info{display:grid;gap:6px;text-align:center;max-width:100%}.status-info small{color:#a7ba9c}.status-info span{color:#99b8a4}.status-info strong{font-weight:600}
+        .actions{grid-template-columns:1.1fr 1fr 1fr}.btn{font-size:11px;box-shadow:none;background:#20342b;color:#d1e3d4;border:1px solid #3b5141}.btn-run{background:#c5d9ba;color:#182b1e;border-color:#c5d9ba}.btn-run.running{background:#d9aa89;color:#3b241a;border-color:#d9aa89}.btn.gold{color:#dfc78e;background:#2a2b23;border-color:#514b36}
+        .logs{background:#080f12;height:130px}.nx-log{overflow-wrap:anywhere}.nx-ok{color:#a5d7b4}.nx-sys{color:#9fb5ad}.nx-warn{color:#d6c38e}
+        .game-window{width:min(650px,calc(100vw - 16px));flex-direction:column}.game-window.open{display:flex}.game-list{overflow:auto;min-height:0;grid-template-columns:repeat(2,minmax(0,1fr));max-height:none}
+        .game-item{min-height:180px;background:linear-gradient(140deg,#2b443155,#0e191d);border-color:#354b3b;padding:18px;gap:18px}.game-item span{font-size:17px;font-weight:600}.game-item span::after{content:'NEXUS ELITE · GAME COLLECTION';color:#8fab96;font-size:9px}.game-item button{background:#2a4535;color:#d0e2c9;border:1px solid #47654a}.close{background:#24342d;color:#a4bda9}
+        .analog{--p:0%;--hand:0deg;--minute:0deg;position:relative;width:174px;height:174px;flex:none;border-radius:50%;padding:4px;background:conic-gradient(#d3bb83 var(--p),#293b31 0);box-shadow:0 10px 35px #0008,0 0 0 6px #18281f}
+        .face{position:relative;height:100%;border-radius:50%;background:radial-gradient(circle,#1f352d,#091215);border:1px solid #48634d}.ticks{position:absolute;inset:7px;border-radius:50%;background:repeating-conic-gradient(from -1deg,#b3bb9c 0deg 1deg,transparent 1deg 30deg);mask:radial-gradient(circle,transparent 64%,black 65%)}
+        .n{position:absolute;color:#a0b3a2;font:10px Georgia,serif}.n12{top:12px;left:50%;transform:translateX(-50%)}.n3{right:12px;top:50%;transform:translateY(-50%)}.n6{bottom:12px;left:50%;transform:translateX(-50%)}.n9{left:12px;top:50%;transform:translateY(-50%)}
+        .hand{position:absolute;left:calc(50% - 1px);bottom:50%;width:2px;height:59px;background:#d6bf87;transform-origin:50% 100%;transform:rotate(var(--hand));border-radius:3px}.minute{height:36px;width:4px;left:calc(50% - 2px);background:#9bbdaa;transform:rotate(var(--minute))}.pin{position:absolute;left:calc(50% - 4px);top:calc(50% - 4px);width:8px;height:8px;border-radius:50%;background:#d6bf87;box-shadow:0 0 0 3px #0c1619}
+        .digital{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);font:600 15px Consolas,monospace;letter-spacing:2px;color:#dfd6b5;background:#10211f;padding:3px 7px;border-radius:5px}.analog.live{box-shadow:0 10px 35px #0008,0 0 0 6px #172b20,0 0 30px #709e7c33}
+        .mission-body{padding:15px;overflow:auto;min-height:0}.toolbar{display:flex;gap:7px;margin-bottom:13px;flex-wrap:wrap}.toolbar button,.claim{padding:9px 12px;border:1px solid #3f5644;border-radius:9px;background:#20362b;color:#c5dcc9;font-size:11px;font-weight:700}.toolbar .active,.claim{background:#c5d9ba;color:#182b1e}.refresh{margin-left:auto}.mission-list{display:grid;gap:10px}.mission{padding:15px;border:1px solid #334936;border-radius:12px;background:#15231f;display:grid;gap:10px}.mission h3{margin:0;font-size:15px;color:#e3e8db}.mission p{margin:0;line-height:1.6;color:#a0b1a3;font-size:11px}.card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.reward{color:#d8c28e;font-size:11px}.muted,.message{color:#94ac99;font-size:11px}.message{padding-top:13px;line-height:1.6}.progress{height:4px;border-radius:4px;background:#2c3e30;overflow:hidden}.progress i{height:100%;display:block;background:#b9cd99}.empty{padding:30px 10px;color:#99b39f;text-align:center;line-height:1.8}
+        @media(max-width:650px){.panel,.game-window{width:calc(100vw - 16px);}.game-list{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,minmax(0,1fr))}}
+        .analog[hidden]{display:none}
+        .analog{width:124px;height:124px;padding:3px}
+        .hand{height:40px}.minute{height:25px}
+        .digital{bottom:23px;font-size:11px;letter-spacing:1px;padding:2px 4px}
+        .n12{top:10px}.n3{right:10px}.n6{bottom:10px}.n9{left:10px}
+        .status-box{padding:13px 10px;gap:12px}
+        .mission.ready{border-color:#82b58c;background:linear-gradient(110deg,#173a2d,#10211e)}.mission.claimed{opacity:.65}
+        .progress{height:7px;background:#293b31;border:1px solid #354c3e}.progress i{background:linear-gradient(90deg,#6baf8e,#d6c791);transition:width .3s}
+        .auto-claim{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px;margin-bottom:13px;border:1px solid #3f5644;border-radius:10px;background:#15271f;font-size:12px;color:#d0e0ca}.auto-claim input{accent-color:#a9cfaa;width:16px;height:16px}.auto-claim span{font-size:10px;color:#9eb49e}
+        [hidden]{display:none!important}
+        .head{height:76px;gap:10px}.logo{width:50px;height:50px;flex-shrink:0;border-radius:15px;border-color:#6bb49e;box-shadow:0 0 16px #47d9a45c,0 0 35px #30c3912b,inset 0 0 16px #47bd9222}.logo img{width:43px;height:43px}.title{flex:1}.title b{font-size:18px}.title span{font-size:8px}
+        .head-action{width:28px;height:30px;background:#20382c;border-radius:8px;color:#bed7c3;font-size:20px;flex-shrink:0}
+        .launcher{position:fixed;right:20px;bottom:20px;width:64px;height:64px;padding:7px;border-radius:19px;border:1px solid #77bea1;background:#122922;box-shadow:0 0 28px #38cf9266;cursor:pointer}.launcher img{width:100%;height:100%;object-fit:contain}
+        .nx-log{display:grid;grid-template-columns:18px 55px 1fr;gap:6px;align-items:start}.log-symbol{font-size:13px}.nx-log .log-message{color:inherit}.nx-log span{font-size:10px}
+        .settings-row{display:grid;grid-template-columns:minmax(100px,1fr) 80px 80px;gap:10px;align-items:center;padding:12px 0;border-bottom:1px solid #2d4033}.settings-row label{display:grid;gap:4px;color:#b9cdbe;font-size:10px}.settings-row input{width:100%;background:#0c1716;border:1px solid #43604a;border-radius:7px;padding:8px;color:#d8e8d7;font:12px 'Segoe UI',sans-serif}.settings-row input:disabled{opacity:.45}.settings-name{font-size:12px;color:#d0dfd0}.settings-note{font-size:11px;color:#9cb3a1;line-height:1.7;padding:10px 0}.switch-row{display:flex;gap:12px;align-items:center;padding:12px;background:#1b2f24;border-radius:11px;color:#d3e3d0;font-size:12px;margin-bottom:12px}.switch-row input{appearance:none;width:36px;height:20px;border-radius:20px;background:#47584c;position:relative;cursor:pointer;flex-shrink:0}.switch-row input:before{content:'';position:absolute;width:14px;height:14px;left:3px;top:3px;background:#d8e3d5;border-radius:50%;transition:transform .2s}.switch-row input:checked{background:#458d69}.switch-row input:checked:before{transform:translateX(16px)}
+        .title{position:relative;isolation:isolate}.title b{text-shadow:0 0 14px #6fe1b455}.title::after{content:'';position:absolute;inset:-8px;z-index:-1;border-radius:10px;opacity:0;background:linear-gradient(100deg,transparent,#62efbe99,transparent);transform:scaleX(.05)}
+        .title.fire::after{animation:title-flash .7s ease-out}.title.fire b{animation:title-reveal .7s ease-out}.title.stopping::after{background:linear-gradient(100deg,transparent,#f5a26b99,transparent)}
+        .title-burst{position:absolute;right:0;top:-10px;font:800 9px 'Segoe UI',sans-serif;letter-spacing:2px;color:#8df5c6;opacity:0}.fire .title-burst{animation:burst-label .9s ease-out}.stopping .title-burst{color:#ffd09b}
+        @keyframes title-flash{0%{opacity:0;transform:scaleX(.05)}25%{opacity:1}100%{opacity:0;transform:scaleX(1.1)}}@keyframes title-reveal{0%{filter:brightness(3);letter-spacing:2px}100%{filter:brightness(1);letter-spacing:.4px}}@keyframes burst-label{15%,65%{opacity:1;transform:translateY(-2px)}100%{opacity:0;transform:translateY(-8px)}}
+        .cooldown{font:11px 'Segoe UI',sans-serif;color:#c8b68f;padding:7px 9px;border:1px solid #3c4e37;border-radius:8px;background:#17251d}.game-item button:disabled{opacity:.4;cursor:wait}
+        .language-options{display:flex;gap:10px}.language-options button{padding:14px 20px;background:#20352b;color:#c6dfcd;border:1px solid #49634c;border-radius:10px}.language-options .selected{background:#c5d9ba;color:#182b1e}
+        @media(prefers-reduced-motion:reduce){.title.fire::after,.title.fire b,.fire .title-burst{animation:none}}
+        .title::after{display:none}.title.fire b{animation:none}.title{overflow:visible}.title b .letter{display:inline-block;font-style:normal}
+        .title.fire .letter{animation:letter-hop 950ms cubic-bezier(.2,.7,.2,1) both;animation-delay:calc(var(--i)*35ms)}
+        .title-beam{position:absolute;pointer-events:none;left:-16px;top:40%;height:3px;width:14px;border-radius:50%;background:#edfff6;opacity:0;box-shadow:0 0 7px 3px #91ffdf,0 0 22px 7px #22dca8;transform-origin:left center}
+        .fire .title-beam{animation:laser-sweep 1.15s ease-out}
+        .title-sparks{position:absolute;pointer-events:none;left:0;top:40%;width:1px;height:1px}
+        .title-sparks i{position:absolute;width:3px;height:3px;border-radius:50%;background:#c4ffe0;opacity:0}
+        .fire .title-sparks i{animation:laser-sparks .8s ease-out}
+        .title.fire>span{animation:subtitle-bounce .85s ease-out .1s}
+        @keyframes letter-hop{0%,100%{transform:translateY(0) rotate(0);filter:brightness(1)}25%{transform:translateY(-9px) rotate(-5deg);filter:brightness(2);text-shadow:0 0 15px #84ffd5}50%{transform:translateY(3px) rotate(3deg)}72%{transform:translateY(-3px)}}
+        @keyframes laser-sweep{0%{opacity:0;left:-16px;width:8px}12%{opacity:1;width:28px}65%{opacity:1;left:88%;width:32px}100%{opacity:0;left:105%;width:5px}}
+        @keyframes laser-sparks{0%{opacity:0;transform:rotate(var(--angle)) translateX(0) scale(2)}20%{opacity:1}100%{opacity:0;transform:rotate(var(--angle)) translateX(27px) scale(.1)}}
+        @keyframes subtitle-bounce{0%,100%{transform:translateY(0)}30%{transform:translateY(-3px);filter:brightness(1.8)}60%{transform:translateY(2px)}}
+        .cooldown{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-width:0;padding:10px;border-radius:10px;overflow:hidden}
+        .card-state{font:600 10px 'Segoe UI',sans-serif;overflow-wrap:anywhere;color:#a9c4b0}.card-digits{font:600 23px/1.1 Consolas,monospace;letter-spacing:1px;font-variant-numeric:tabular-nums;color:#d9e6bc;text-shadow:0 0 10px #c5ed8b33}
+        .cooldown[data-mode="playing"]{background:#10362a;border-color:#53a787}.cooldown[data-mode="playing"] .card-digits{color:#9fffd0;text-shadow:0 0 12px #51ffb966}.cooldown[data-mode="cooldown"] .card-digits{color:#ddc28d}
+        .language-picker{width:min(100%,320px);padding:8px 0 15px}.language-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:linear-gradient(120deg,#233c2c,#15271f);border:1px solid #567659;border-radius:12px;color:#deebd6;font-size:13px;text-align:left}
+        .language-toggle[aria-expanded="true"]{border-color:#b8d1a4;box-shadow:0 0 18px #84b59122}.language-toggle span{font-size:20px;color:#a9c6a1}
+        .language-catalog{display:grid;gap:4px;padding:6px;margin-top:7px;background:#0e1b16;border:1px solid #3b5942;border-radius:12px;box-shadow:0 12px 24px #0004;animation:catalog-open .18s ease-out}
+        .language-catalog button{padding:12px;border:0;border-radius:8px;background:transparent;text-align:left;color:#b9cdbb;font-size:12px}.language-catalog button:hover,.language-catalog .selected{background:#284331;color:#eff8dc}.language-catalog .selected::after{content:'✓';float:right;color:#bddd9c}
+        @keyframes catalog-open{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+        @media(prefers-reduced-motion:reduce){.title.fire .letter,.fire .title-beam,.fire .title-sparks i,.title.fire>span,.language-catalog{animation:none!important}}
+        .game-list{align-content:start;grid-auto-rows:max-content}
+        .game-item{grid-template-rows:auto minmax(52px,auto) 39px;align-content:start}
+        .cooldown{position:relative;isolation:isolate;min-height:52px;height:auto;padding:11px 10px;line-height:normal;flex-shrink:0;background:#14231c}
+        .cooldown::before{content:'';position:absolute;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(90deg,#1c6243,#2b916b);transform:scaleX(var(--fill,0));transform-origin:left center;transition:transform .15s linear}
+        .cooldown[data-mode="playing"],.cooldown[data-mode="cooldown"]{background:#14231c}
+        .card-state{display:block;margin:0;line-height:1.35;min-width:0}
+        .card-digits{display:block;margin:0;padding:0;white-space:nowrap;font-size:clamp(18px,2.4vw,23px);line-height:28px;letter-spacing:.5px}
+        @media(prefers-reduced-motion:reduce){.cooldown::before{transition:none}}
+      </style>
+      <section class="panel" id="panel">
+        <div class="head" id="dragHandle"><div class="logo"><img src="${LOGO_URL}" alt="Nexus Bot"></div><div class="title"><b>Nexus Bot</b><span>AZTLACOIN · ULTRA 4.2.0</span></div><button class="head-action" id="settingsBtn" aria-label="Ayarlar">⚙</button><button class="head-action" id="minimizeBtn" aria-label="Küçült">×</button></div>
+        <div class="body">
+          <div class="stats"><div class="stat"><span>Status</span><strong id="statusText">Idle</strong></div><div class="stat"><span>Games</span><strong>${GAMES.length}</strong></div><div class="stat"><span>Timer</span><strong id="timerStat">Ready</strong></div></div>
+          <div class="status-box"><div class="status-info"><small>Session Monitor</small><strong id="statusMirror">Idle</strong><span id="substatusText">Hazır</span></div><div class="analog" id="clock"><div class="face"><div class="ticks"></div><span class="n n12">12</span><span class="n n3">3</span><span class="n n6">6</span><span class="n n9">9</span><div class="digital" id="timerCircle">00:00</div><div class="hand minute"></div><div class="hand"></div><div class="pin"></div></div></div></div>
+          <div class="actions"><button class="btn btn-run" id="toggleBtn">▶ START</button><button class="btn" id="gamesBtn">◈ Games</button><button class="btn gold" id="tasksBtn">☷ Görevler</button></div>
+          <div class="logs" id="logBox"></div>
+        </div>
+      </section>
+      <section class="game-window" id="gamesWindow"><div class="window-head" id="gamesDrag"><div>🎮</div><div><strong>Game Center</strong><span>PLAY AND BOOST POWER</span></div><button class="close" id="closeGames">×</button></div><div class="game-list" id="gameList"></div></section>
+      <section class="game-window" id="tasksWindow"><div class="window-head" id="tasksDrag"><div><strong>Mission Center</strong><span>PROGRESS · REWARDS · CLAIM</span></div><button class="close" id="closeTasks" aria-label="Görevleri kapat">×</button></div><div class="mission-body"><div class="toolbar"><button class="active" data-tab="daily">Günlük</button><button data-tab="weekly">Haftalık</button><button class="refresh" id="refreshMissions">↻ Yenile</button></div><label class="auto-claim"><input type="checkbox" id="autoClaim"> Auto Claim <span>Görev hedefinde doğrular ve hazır ödülleri alır</span></label><div class="mission-list" id="missionList"></div><div class="message" id="missionMessage" role="status">Görevler yüklenmeye hazır.</div></div></section>
+      <button class="launcher" id="launcher" hidden aria-label="Nexus Bot menüsünü aç"><img src="${LOGO_URL}" alt=""></button>
+      <section class="game-window" id="settingsWindow"><div class="window-head" id="settingsDrag"><div><strong>Ayarlar</strong><span>NEXUS BOT · ULTRA CONTROL</span></div><button class="close" id="closeSettings" aria-label="Ayarları kapat">×</button></div><div class="mission-body"><div class="toolbar"><button class="active" data-settings-tab="timing">Oyun Süreleri</button><button data-settings-tab="smart">Akıllı Bot</button><button data-settings-tab="language">🌐 Dil</button></div><div id="settingsContent"></div></div></section>
+    `;
+
+    ui = {
+      root,
+      settingsWindow: root.getElementById('settingsWindow'),
+      clock: root.getElementById('clock'),
+      tasksWindow: root.getElementById('tasksWindow'),
+      missionList: root.getElementById('missionList'),
+      missionMessage: root.getElementById('missionMessage'),
+      refresh: root.getElementById('refreshMissions'),
+      panel: root.getElementById('panel'),
+      dragHandle: root.getElementById('dragHandle'),
+      toggleBtn: root.getElementById('toggleBtn'),
+      status: root.getElementById('statusText'),
+      statusMirror: root.getElementById('statusMirror'),
+      substatus: root.getElementById('substatusText'),
+      timer: root.getElementById('timerCircle'),
+      timerStat: root.getElementById('timerStat'),
+      logs: root.getElementById('logBox'),
+      gameList: root.getElementById('gameList'),
+      gamesWindow: root.getElementById('gamesWindow')
+    };
+
+    GAMES.forEach(game => {
+      const row = document.createElement('div');
+      row.className = 'game-item';
+      row.dataset.game = game.id;
+      row.innerHTML = `<span>${game.name}</span><small class="cooldown" data-cooldown="${game.id}"><em class="card-state">Bekleme bilgisi yüklenmedi</em><strong class="card-digits">--:--</strong></small><button data-id="${game.id}">PLAY</button>`;
+      row.querySelector('button').onclick = () => {
+        if (loopActive) { log('Manuel oyun için önce otomasyonu durdurun.', 'warn'); return; }
+        log(`Manuel başlatıldı: ${game.name}`, 'play');
+        executeGameFlow(game);
+      };
+      ui.gameList.appendChild(row);
+    });
+
+    ui.toggleBtn.onclick = toggleBot;
+    root.getElementById('settingsBtn').onclick = () => { renderSettings(); toggleWindow(ui.settingsWindow); };
+    root.getElementById('closeSettings').onclick = () => ui.settingsWindow.classList.remove('open');
+    root.getElementById('minimizeBtn').onclick = () => {
+      ui.panel.hidden = true;
+      [ui.gamesWindow,ui.tasksWindow,ui.settingsWindow].forEach(el => el.classList.remove('open'));
+      root.getElementById('launcher').hidden = false;
+    };
+    root.getElementById('launcher').onclick = () => {
+      ui.panel.hidden = false; root.getElementById('launcher').hidden = true; clampWindow(ui.panel);
+    };
+    root.querySelectorAll('[data-settings-tab]').forEach(button => button.onclick = () => {
+      settingsTab = button.dataset.settingsTab;
+      root.querySelectorAll('[data-settings-tab]').forEach(tab => tab.classList.toggle('active', tab === button));
+      renderSettings();
+    });
+    makeDraggable(ui.settingsWindow, root.getElementById('settingsDrag'), 'settingsX', 'settingsY', 450, 90);
+    root.getElementById('gamesBtn').onclick = () => { toggleWindow(ui.gamesWindow); if (ui.gamesWindow.classList.contains('open')) refreshCooldowns(); };
+    root.getElementById('tasksBtn').onclick = () => { toggleWindow(ui.tasksWindow); if (ui.tasksWindow.classList.contains('open')) missionPulse(); };
+    root.getElementById('closeGames').onclick = () => ui.gamesWindow.classList.remove('open');
+    root.getElementById('closeTasks').onclick = () => ui.tasksWindow.classList.remove('open');
+    ui.refresh.onclick = missionPulse;
+    const autoClaim = root.getElementById('autoClaim');
+    autoClaim.checked = Boolean(state.autoClaim);
+    autoClaim.onchange = () => {
+      state.autoClaim = autoClaim.checked; saveState();
+      log('Auto Claim: ' + (state.autoClaim ? 'AÇIK' : 'KAPALI'), 'sys');
+      if (state.autoClaim) missionPulse();
+    };
+
+    root.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => {
+      missionTab = button.dataset.tab;
+      root.querySelectorAll('[data-tab]').forEach(tab => tab.classList.toggle('active', tab === button));
+      renderMissions();
+    });
+    makeDraggable(ui.panel, ui.dragHandle, 'x', 'y', 20, 70);
+    makeDraggable(ui.gamesWindow, root.getElementById('gamesDrag'), 'gamesX', 'gamesY', 430, 70);
+    makeDraggable(ui.tasksWindow, root.getElementById('tasksDrag'), 'tasksX', 'tasksY', 470, 110);
+    window.addEventListener('resize', () => [ui.panel,ui.gamesWindow,ui.tasksWindow,ui.settingsWindow].forEach(clampWindow));
+    root.addEventListener('keydown', event => { if (event.key === 'Escape') { ui.gamesWindow.classList.remove('open'); ui.tasksWindow.classList.remove('open'); } });
+    renderMissions();
+    renderTimer(0, '');
+    setInterval(renderCooldowns, 1000);
+    startLocalization();
+    log('Nexus Bot Ultra 4.2.2 hazır.', 'ok');
+  }
+
+  let topLayer = 1;
+  function clampWindow(el) {
+    if (!el.getClientRects().length) return;
+    const rect = el.getBoundingClientRect();
+    el.style.left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, rect.left)) + 'px';
+    el.style.top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, rect.top)) + 'px';
+  }
+  function toggleWindow(el) {
+    el.classList.toggle('open');
+    if (el.classList.contains('open')) { el.style.zIndex = ++topLayer; clampWindow(el); }
+  }
+  function makeDraggable(el, handle, xKey, yKey, x, y) {
+    el.style.left = (Number.isFinite(state[xKey]) ? state[xKey] : x) + 'px';
+    el.style.top = (Number.isFinite(state[yKey]) ? state[yKey] : y) + 'px';
+    clampWindow(el);
+    let drag = null;
+    el.addEventListener('pointerdown', () => { el.style.zIndex = ++topLayer; });
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || event.target.closest('button')) return;
+      const rect = el.getBoundingClientRect();
+      drag = {dx:event.clientX-rect.left,dy:event.clientY-rect.top};
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    handle.addEventListener('pointermove', event => {
+      if (!drag) return;
+      el.style.left = (event.clientX-drag.dx) + 'px';
+      el.style.top = (event.clientY-drag.dy) + 'px';
+      clampWindow(el);
+    });
+    const finish = () => {
+      if (!drag) return;
+      drag = null;
+      state[xKey] = parseFloat(el.style.left);
+      state[yKey] = parseFloat(el.style.top);
+      saveState();
+    };
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
+    handle.addEventListener('lostpointercapture', finish);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', buildUI);
+  } else {
+    buildUI();
+  }
+})();
