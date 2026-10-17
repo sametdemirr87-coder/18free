@@ -731,6 +731,7 @@ class CryptoCropsUltraPanel(tk.Tk):
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "Liste alinamadi")
             self.licenses_cache = res.get("licenses") or []
+            self.sync_deleted_script_files()
             self.refresh_tree()
             if not silent:
                 self.log_line(f"Lisans listesi yenilendi: {len(self.licenses_cache)}")
@@ -740,6 +741,31 @@ class CryptoCropsUltraPanel(tk.Tk):
         except Exception as exc:
             if not silent:
                 self.log_line("Lisans liste hata: " + str(exc))
+
+    def sync_deleted_script_files(self):
+        """Panel dışından silinen oluşturulmuş scriptleri lisans listesiyle eşitler."""
+        index = load_json(SCRIPT_INDEX_FILE, {})
+        changed = False
+        for license_id, path_text in list(index.items()):
+            path = Path(str(path_text))
+            if path.is_file():
+                continue
+            try:
+                res = api_json(
+                    "POST",
+                    self.server_url("/admin/license/delete"),
+                    {"license_id": license_id},
+                    self.admin_var.get().strip(),
+                )
+                if res.get("success"):
+                    self.licenses_cache = [x for x in self.licenses_cache if str(x.get("id") or "") != str(license_id)]
+                    self.log_line("Dosyası silinen script panelden kaldırıldı: " + str(license_id))
+            except Exception as exc:
+                self.log_line("Silinen dosya eşitleme hata: " + str(exc))
+            index.pop(license_id, None)
+            changed = True
+        if changed:
+            save_json(SCRIPT_INDEX_FILE, index)
 
     def refresh_tree(self):
         selected_key = ""
@@ -883,8 +909,17 @@ class CryptoCropsUltraPanel(tk.Tk):
             res = api_json("POST", self.server_url("/admin/license/delete"), {"license_id": lic.get("id", "")}, self.admin_var.get().strip())
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "Silinemedi")
+            index = load_json(SCRIPT_INDEX_FILE, {})
+            script_path = Path(str(index.pop(str(lic.get("id") or ""), "")))
+            if script_path and script_path.is_file():
+                generated_root = GENERATED_DIR.resolve()
+                resolved_script = script_path.resolve()
+                if generated_root == resolved_script.parent:
+                    script_path.unlink()
+                    self.log_line("Script dosyası silindi: " + str(script_path))
+            save_json(SCRIPT_INDEX_FILE, index)
             self.refresh_licenses(silent=True)
-            self.log_line("Lisans silindi")
+            self.log_line("Lisans ve script silindi")
         except Exception as exc:
             self.log_line("Silme hata: " + str(exc))
             messagebox.showerror("Hata", str(exc))
