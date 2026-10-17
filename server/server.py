@@ -20,8 +20,10 @@ APP_STATE_KEY = "minerbytsfree_runtime"
 BOT_BUNDLE_KEY = "minerbytsfree_bot_bundle"
 FLASH_BOT_BUNDLE_KEY = "zuncia_bot_bundle"
 AZTLACOIN_BOT_BUNDLE_KEY = "aztlacoin_bot_bundle"
+CROPCROPS_BOT_BUNDLE_KEY = "cryptocrops_bot_bundle"
 FLASH_APP_KEY = "zuncia"
 AZTLACOIN_APP_KEY = "aztlacoin"
+CROPCROPS_APP_KEY = "cryptocrops"
 
 app = FastAPI(title=config.APP_NAME)
 app.add_middleware(
@@ -48,6 +50,11 @@ RUNTIME_STATE: dict[str, Any] = {
         "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
     },
     AZTLACOIN_APP_KEY: {
+        "licenses": [],
+        "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
+        "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
+    },
+    CROPCROPS_APP_KEY: {
         "licenses": [],
         "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
         "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
@@ -114,6 +121,8 @@ def app_state(app_key: str = "minerbyts") -> dict[str, Any]:
         return RUNTIME_STATE[FLASH_APP_KEY]
     if app_key == AZTLACOIN_APP_KEY:
         return RUNTIME_STATE[AZTLACOIN_APP_KEY]
+    if app_key == CROPCROPS_APP_KEY:
+        return RUNTIME_STATE[CROPCROPS_APP_KEY]
     return RUNTIME_STATE
 
 
@@ -122,6 +131,8 @@ def app_label(app_key: str = "minerbyts") -> str:
         return "zuncia"
     if app_key == AZTLACOIN_APP_KEY:
         return "aztlacoin"
+    if app_key == CROPCROPS_APP_KEY:
+        return "cryptocrops"
     return "minerbyts"
 
 
@@ -594,6 +605,71 @@ def aztlacoin_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | N
     return admin_bot_upload_for_app(payload, x_admin_token, AZTLACOIN_APP_KEY)
 
 
+@app.get("/cryptocrops/health")
+def cryptocrops_health() -> dict[str, Any]:
+    ensure_shapes()
+    state = app_state(CROPCROPS_APP_KEY)
+    bundle = state.get("bot_bundle") or {}
+    return {"success": True, "project": "cryptocrops", "status": RUNTIME_STATE.get("status", "unknown"), "time": utc_now(), "supabase": bool(SUPABASE), "license_count": len(state.get("licenses") or []), "bot_uploaded": bool(bundle.get("content")), "bot_hash": bundle.get("hash", "")}
+
+
+@app.post("/cryptocrops/api/auth")
+def cryptocrops_api_auth(payload: AuthPayload) -> dict[str, Any]:
+    return api_auth_for_app(payload, CROPCROPS_APP_KEY)
+
+
+@app.post("/cryptocrops/api/heartbeat")
+def cryptocrops_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
+    return api_heartbeat_for_app(payload, CROPCROPS_APP_KEY)
+
+
+@app.post("/cryptocrops/api/tamper/report")
+def cryptocrops_api_tamper(payload: TamperPayload) -> dict[str, Any]:
+    return api_tamper_report_for_app(payload, CROPCROPS_APP_KEY)
+
+
+@app.get("/cryptocrops/api/bot/bundle")
+def cryptocrops_api_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
+    return api_bot_bundle_for_app(token, client_id, script_id, account_id, CROPCROPS_APP_KEY)
+
+
+@app.get("/cryptocrops/admin/licenses")
+def cryptocrops_admin_licenses(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    mark_stale_offline()
+    return {"success": True, "licenses": [sanitize_license(x) for x in app_state(CROPCROPS_APP_KEY).get("licenses", [])]}
+
+
+@app.post("/cryptocrops/admin/license/create")
+def cryptocrops_admin_license_create(payload: LicenseCreatePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_create_for_app(payload, x_admin_token, CROPCROPS_APP_KEY)
+
+
+@app.post("/cryptocrops/admin/license/toggle")
+def cryptocrops_admin_license_toggle(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_toggle_for_app(payload, x_admin_token, CROPCROPS_APP_KEY)
+
+
+@app.post("/cryptocrops/admin/license/key")
+def cryptocrops_admin_license_key(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_key_for_app(payload, x_admin_token, CROPCROPS_APP_KEY)
+
+
+@app.post("/cryptocrops/admin/license/delete")
+def cryptocrops_admin_license_delete(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_delete_for_app(payload, x_admin_token, CROPCROPS_APP_KEY)
+
+
+@app.post("/cryptocrops/admin/license/tamper-clear")
+def cryptocrops_admin_license_tamper_clear(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_tamper_clear_for_app(payload, x_admin_token, CROPCROPS_APP_KEY)
+
+
+@app.post("/cryptocrops/admin/bot/upload")
+def cryptocrops_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_bot_upload_for_app(payload, x_admin_token, CROPCROPS_APP_KEY)
+
+
 def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
     ensure_shapes()
     state = app_state(app_key)
@@ -877,12 +953,12 @@ def ensure_shapes() -> None:
     RUNTIME_STATE.setdefault("licenses", [])
     RUNTIME_STATE.setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
     RUNTIME_STATE.setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
-    for app_key in (FLASH_APP_KEY, AZTLACOIN_APP_KEY):
+    for app_key in (FLASH_APP_KEY, AZTLACOIN_APP_KEY, CROPCROPS_APP_KEY):
         RUNTIME_STATE.setdefault(app_key, {})
         RUNTIME_STATE[app_key].setdefault("licenses", [])
         RUNTIME_STATE[app_key].setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
         RUNTIME_STATE[app_key].setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
-    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[AZTLACOIN_APP_KEY]):
+    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[AZTLACOIN_APP_KEY], RUNTIME_STATE[CROPCROPS_APP_KEY]):
         for lic in state.get("licenses") or []:
             if not isinstance(lic, dict):
                 continue
@@ -1087,6 +1163,10 @@ def load_bot_bundle() -> None:
         rows = result.data or []
         if rows and isinstance(rows[0].get("value"), dict):
             RUNTIME_STATE[AZTLACOIN_APP_KEY]["bot_bundle"] = rows[0]["value"]
+        result = SUPABASE.table("app_state").select("value").eq("key", CROPCROPS_BOT_BUNDLE_KEY).limit(1).execute()
+        rows = result.data or []
+        if rows and isinstance(rows[0].get("value"), dict):
+            RUNTIME_STATE[CROPCROPS_APP_KEY]["bot_bundle"] = rows[0]["value"]
         RUNTIME_STATE.pop("bot_storage_error", None)
     except Exception as exc:
         RUNTIME_STATE["bot_storage_error"] = str(exc)
@@ -1114,6 +1194,11 @@ def save_state(force: bool = False) -> None:
     aztlacoin_bot.pop("content", None)
     aztlacoin_state["bot_bundle"] = aztlacoin_bot
     payload[AZTLACOIN_APP_KEY] = aztlacoin_state
+    cryptocrops_state = dict(payload.get(CROPCROPS_APP_KEY) or {})
+    cryptocrops_bot = dict(cryptocrops_state.get("bot_bundle") or {})
+    cryptocrops_bot.pop("content", None)
+    cryptocrops_state["bot_bundle"] = cryptocrops_bot
+    payload[CROPCROPS_APP_KEY] = cryptocrops_state
     save_app_state(APP_STATE_KEY, payload, "storage_error")
 
 
@@ -1124,6 +1209,8 @@ def save_bot_bundle(force: bool = False, app_key: str = "minerbyts") -> None:
         save_app_state(FLASH_BOT_BUNDLE_KEY, RUNTIME_STATE[FLASH_APP_KEY].get("bot_bundle") or {}, "flash_bot_storage_error")
     elif app_key == AZTLACOIN_APP_KEY:
         save_app_state(AZTLACOIN_BOT_BUNDLE_KEY, RUNTIME_STATE[AZTLACOIN_APP_KEY].get("bot_bundle") or {}, "aztlacoin_bot_storage_error")
+    elif app_key == CROPCROPS_APP_KEY:
+        save_app_state(CROPCROPS_BOT_BUNDLE_KEY, RUNTIME_STATE[CROPCROPS_APP_KEY].get("bot_bundle") or {}, "cryptocrops_bot_storage_error")
     else:
         save_app_state(BOT_BUNDLE_KEY, RUNTIME_STATE.get("bot_bundle") or {}, "bot_storage_error")
 
