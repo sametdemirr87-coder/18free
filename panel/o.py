@@ -60,6 +60,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let reauthInProgress = false;
     let silentRetryTimer = null;
     let banRequestSent = false;
+    let releaseEmbeddedBot = null;
+    globalThis.__NEXUS_CROPCROPS_ULTRA_START__ = new Promise((resolve) => { releaseEmbeddedBot = resolve; });
 
     function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
@@ -174,6 +176,12 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         try {
             removeGate();
             const saved = getSavedLicenseKey();
+            const english = String(navigator.language || '').toLowerCase().startsWith('en');
+            const text = english ? {
+                access:'🌾 PRIVATE FARM ACCESS', key:'FARM LICENSE KEY', placeholder:'Enter your license key', start:'🌱 START FARM', hint:'Enter your key to access the farm.', missing:'A license key is required.', success:'Access granted. Preparing your farm...'
+            } : {
+                access:'🌾 ÖZEL ÇİFTLİK ERİŞİMİ', key:'ÇİFTLİK LİSANS ANAHTARI', placeholder:'Lisans anahtarını gir', start:'🌱 ÇİFTLİĞİ BAŞLAT', hint:'Hasat sistemine giriş için anahtarını doğrula.', missing:'Lisans anahtarı gerekli.', success:'Giriş onaylandı. Çiftlik hazırlanıyor...'
+            };
             uiRoot = document.createElement('div');
             uiRoot.id = 'nexusFreeGate';
             uiRoot.innerHTML = `
@@ -210,16 +218,16 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                     <div class="nfg-burst"></div>
                     <div class="nfg-top">
                         <div class="nfg-brand">
-                            <div class="nfg-sub">🌾 Private farm access</div>
+                            <div class="nfg-sub">${text.access}</div>
                             <div class="nfg-title">CryptoCrops Ultra</div>
                         </div>
                         <button class="nfg-tg" id="nfgTelegram" title="Farm access">🚜</button>
                     </div>
-                    <label class="nfg-label" for="nfgKey">ÇİFTLİK LİSANS ANAHTARI</label>
-                    <input class="nfg-input" id="nfgKey" placeholder="Lisans anahtarını gir" value="${escapeAttr(saved)}" autocomplete="off">
-                    <button class="nfg-btn" id="nfgUnlock">🌱 ÇİFTLİĞİ BAŞLAT</button>
+                    <label class="nfg-label" for="nfgKey">${text.key}</label>
+                    <input class="nfg-input" id="nfgKey" placeholder="${text.placeholder}" value="${escapeAttr(saved)}" autocomplete="off">
+                    <button class="nfg-btn" id="nfgUnlock">${text.start}</button>
                     <div class="nfg-loader"></div>
-                    <div class="nfg-status" id="nfgStatus">${escapeHtml(message || 'Hasat sistemine giriş için anahtarını doğrula.')}</div>
+                    <div class="nfg-status" id="nfgStatus">${escapeHtml(message || text.hint)}</div>
                     <div class="nfg-mini">NEXUS · CROPCROPS · ULTRA</div>
                 </div>
             `;
@@ -228,7 +236,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             document.getElementById('nfgUnlock').onclick = async () => {
                 const key = String(document.getElementById('nfgKey').value || '').trim();
                 if (!key) {
-                    setGateStatus('Lisans anahtarı gerekli.', true);
+                    setGateStatus(text.missing, true);
                     return;
                 }
                 await unlockWithKey(key);
@@ -258,7 +266,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             if (!uiRoot) return resolve();
             const card = uiRoot.querySelector('.nfg-card');
             if (card) card.classList.add('nfg-success');
-            setGateStatus('Giriş onaylandı. Çiftlik hazırlanıyor...', false);
+            setGateStatus(String(navigator.language || '').toLowerCase().startsWith('en') ? 'Access granted. Preparing your farm...' : 'Giriş onaylandı. Çiftlik hazırlanıyor...', false);
             setTimeout(resolve, 720);
         });
     }
@@ -377,7 +385,6 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             throw new Error((bundle && bundle.error) || 'Bot could not be loaded');
         }
         if (bundle.hash && loadedBotHash === bundle.hash) return;
-        const code = decryptBot(bundle.encrypted || '');
         loadedBotHash = bundle.hash || '';
         window.__MINERBYTSFREE_CLIENT__ = {
             serverUrl: SERVER_URL,
@@ -387,8 +394,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             accountId: collectAccountId(),
             botHash: loadedBotHash
         };
-        (0, eval)(code);
-        injectTelegramButton();
+        // Bot, script üretilirken bu loader'ın altına eklenir. CSP nedeniyle
+        // sunucudan gelen metni eval etmek yerine kendi Tampermonkey alanında çalışır.
     }
 
     async function unlockWithKey(key, silent = false) {
@@ -426,6 +433,11 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         }
         if (!silent) await showGateSuccess();
         removeGate();
+        if (releaseEmbeddedBot) {
+            const release = releaseEmbeddedBot;
+            releaseEmbeddedBot = null;
+            release();
+        }
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         heartbeatTimer = setInterval(heartbeat, 30000);
     }
@@ -477,6 +489,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 
     boot();
 })();
+
+__STATIC_BOT__
 '''
 
 
@@ -517,6 +531,18 @@ def api_json(method: str, url: str, payload=None, admin_token: str = ""):
 def safe_name(value: str, fallback: str = "User") -> str:
     out = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(value or "").strip())
     return out or fallback
+
+
+def embed_bot_for_loader(source: str) -> str:
+    """Keep the bot in the userscript sandbox so its GM_* grants survive CSP."""
+    marker = "(function(){"
+    if marker not in source:
+        raise RuntimeError("Bot başlangıç yapısı bulunamadı")
+    return source.replace(
+        marker,
+        "(async function(){ await globalThis.__NEXUS_CROPCROPS_ULTRA_START__;",
+        1,
+    )
 
 
 class CryptoCropsUltraPanel(tk.Tk):
@@ -647,6 +673,12 @@ class CryptoCropsUltraPanel(tk.Tk):
     def generate_script(self):
         try:
             self.save_settings()
+            bot_path = Path(self.bot_path_var.get().strip())
+            if not bot_path.is_file():
+                raise RuntimeError("Bot dosyası bulunamadı")
+            content = bot_path.read_text(encoding="utf-8", errors="replace")
+            if not content.strip():
+                raise RuntimeError("Bot dosyası boş")
             client_id = "ccu_" + secrets.token_hex(8)
             script_id = "script_" + secrets.token_hex(8)
             user_name = self.license_name_var.get().strip() or self.next_user_name()
@@ -673,7 +705,8 @@ class CryptoCropsUltraPanel(tk.Tk):
                       .replace("__CLIENT_ID__", client_id)
                       .replace("__SCRIPT_ID__", script_id)
                       .replace("__SERVER_URL__", server_url)
-                      .replace("__SERVER_HOST__", host))
+                      .replace("__SERVER_HOST__", host)
+                      .replace("__STATIC_BOT__", embed_bot_for_loader(content)))
             out_path = GENERATED_DIR / f"{safe_name(user_name)}_{client_id[:8]}.user.js"
             out_path.write_text(script, encoding="utf-8")
             index = load_json(SCRIPT_INDEX_FILE, {})
