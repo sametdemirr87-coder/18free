@@ -176,11 +176,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         try {
             removeGate();
             const saved = getSavedLicenseKey();
-            const english = String(navigator.language || '').toLowerCase().startsWith('en');
-            const text = english ? {
-                access:'🌾 PRIVATE FARM ACCESS', key:'FARM LICENSE KEY', placeholder:'Enter your license key', start:'🌱 START FARM', hint:'Enter your key to access the farm.', missing:'A license key is required.', success:'Access granted. Preparing your farm...'
-            } : {
-                access:'🌾 ÖZEL ÇİFTLİK ERİŞİMİ', key:'ÇİFTLİK LİSANS ANAHTARI', placeholder:'Lisans anahtarını gir', start:'🌱 ÇİFTLİĞİ BAŞLAT', hint:'Hasat sistemine giriş için anahtarını doğrula.', missing:'Lisans anahtarı gerekli.', success:'Giriş onaylandı. Çiftlik hazırlanıyor...'
+            const text = {
+                access:'🌾 NEXUS PRIVATE FARM ACCESS', key:'FARM LICENSE KEY', placeholder:'Enter your farm license key', start:'🌱 START FARM', hint:'Enter your key to access the private farm.', missing:'A farm license key is required.', success:'Access granted. Preparing your farm...'
             };
             uiRoot = document.createElement('div');
             uiRoot.id = 'nexusFreeGate';
@@ -188,6 +185,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                 <style>
                     #nexusFreeGate { position:fixed; inset:0; z-index:2147483647; display:grid; place-items:center; font-family:Inter,Segoe UI,Arial,sans-serif; color:#fff8dc; background:radial-gradient(circle at 50% 8%, rgba(244,190,62,.20), transparent 30%), radial-gradient(circle at 12% 88%, rgba(69,131,66,.36), transparent 38%), linear-gradient(180deg, rgba(8,24,12,.90), rgba(3,10,5,.99)); backdrop-filter:blur(16px); }
                     .nfg-card { width:min(430px, calc(100vw - 32px)); border:1px solid rgba(245,200,76,.48); background:linear-gradient(155deg, rgba(38,74,35,.96), rgba(12,30,15,.98)); box-shadow:0 28px 90px rgba(0,0,0,.62), 0 0 55px rgba(115,174,74,.22), inset 0 1px 0 rgba(255,255,255,.08); border-radius:24px; padding:28px; position:relative; overflow:hidden; animation:nfgIn .65s cubic-bezier(.2,.9,.2,1) both; }
+                    .nfg-card:has(.nfg-farm-row) { background-image:linear-gradient(155deg, rgba(38,74,35,.96), rgba(12,30,15,.98)), repeating-linear-gradient(135deg, transparent 0 18px, rgba(185,218,109,.035) 18px 20px); }
                     .nfg-card:before { content:""; position:absolute; inset:-2px; background:linear-gradient(115deg, transparent, rgba(250,204,21,.23), transparent); transform:translateX(-120%); animation:nfgSweep 2.8s ease-in-out infinite; }
                     .nfg-card:after { content:""; position:absolute; inset:1px; border-radius:22px; pointer-events:none; border:1px solid rgba(255,255,255,.04); }
                     .nfg-top { position:relative; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
@@ -209,6 +207,10 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                     .nfg-burst { position:absolute; inset:50%; width:12px; height:12px; border-radius:50%; background:#facc15; transform:translate(-50%,-50%) scale(0); pointer-events:none; }
                     .nfg-success .nfg-burst { animation:nfgBurst .75s ease-out forwards; }
                     .nfg-mini { position:relative; margin-top:10px; color:rgba(255,248,220,.48); text-align:center; font-size:11px; font-weight:800; }
+                    .nfg-farm-row { position:relative; display:flex; gap:7px; justify-content:center; margin:16px 0 2px; }
+                    .nfg-farm-row i { display:block; width:28px; height:5px; border-radius:10px; background:linear-gradient(90deg,#4e7e35,#9fbe52); box-shadow:0 0 10px rgba(159,190,82,.3); }
+                    .nfg-badges { position:relative; display:flex; justify-content:center; gap:8px; margin-top:10px; }
+                    .nfg-badge { border:1px solid rgba(185,218,109,.22); background:rgba(10,35,14,.52); border-radius:999px; padding:5px 9px; color:#cfe8ad; font-size:9px; font-weight:900; letter-spacing:.75px; }
                     @keyframes nfgIn { from { opacity:0; transform:translateY(18px) scale(.94); filter:blur(8px); } to { opacity:1; transform:none; filter:none; } }
                     @keyframes nfgSweep { 45%,100% { transform:translateX(120%); } }
                     @keyframes nfgSpin { to { transform:rotate(360deg); } }
@@ -228,6 +230,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                     <button class="nfg-btn" id="nfgUnlock">${text.start}</button>
                     <div class="nfg-loader"></div>
                     <div class="nfg-status" id="nfgStatus">${escapeHtml(message || text.hint)}</div>
+                    <div class="nfg-farm-row"><i></i><i></i><i></i><i></i><i></i></div>
+                    <div class="nfg-badges"><span class="nfg-badge">LICENSED</span><span class="nfg-badge">FARM SECURED</span><span class="nfg-badge">ULTRA</span></div>
                     <div class="nfg-mini">NEXUS · CROPCROPS · ULTRA</div>
                 </div>
             `;
@@ -266,7 +270,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             if (!uiRoot) return resolve();
             const card = uiRoot.querySelector('.nfg-card');
             if (card) card.classList.add('nfg-success');
-            setGateStatus(String(navigator.language || '').toLowerCase().startsWith('en') ? 'Access granted. Preparing your farm...' : 'Giriş onaylandı. Çiftlik hazırlanıyor...', false);
+            setGateStatus('Access granted. Preparing your farm...', false);
             setTimeout(resolve, 720);
         });
     }
@@ -595,7 +599,7 @@ class CryptoCropsUltraPanel(tk.Tk):
         self.tree.heading("key", text="Key")
         self.tree.heading("active", text="Aktif")
         self.tree.heading("account", text="Hesap")
-        self.tree.heading("online", text="Online")
+        self.tree.heading("online", text="Status")
         self.tree.column("name", width=140)
         self.tree.column("key", width=210)
         self.tree.column("active", width=70, anchor="center")
@@ -752,7 +756,7 @@ class CryptoCropsUltraPanel(tk.Tk):
                 lic.get("key", ""),
                 "EVET" if lic.get("active") else "HAYIR",
                 lic.get("account_id", "") or "-",
-                "EVET" if lic.get("online") else "HAYIR",
+                "F12" if lic.get("tamper_detected") else ("EVET" if lic.get("online") else "HAYIR"),
             ))
             if selected_key and lic.get("key") == selected_key:
                 refocus = item
