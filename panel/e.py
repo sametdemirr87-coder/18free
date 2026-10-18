@@ -35,6 +35,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 // @version      1.0.1
 // @description  Nexus Zuncia Bot secure loader
 // @match        https://zuncia.com/game/*
+// @match        https://www.zuncia.com/game/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
