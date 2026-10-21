@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import subprocess
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
@@ -549,6 +550,38 @@ def embed_bot_for_loader(source: str) -> str:
     )
 
 
+def validate_bot_source(source: str) -> None:
+    """Fail early instead of creating a broken userscript from invalid JS."""
+    try:
+        result = subprocess.run(
+            ["node", "--check"],
+            input=source,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("Node.js bulunamadı; bot syntax kontrolü yapılamıyor") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Bot syntax kontrolü zaman aşımına uğradı") from exc
+    if result.returncode:
+        detail = (result.stderr or result.stdout or "Bilinmeyen JavaScript syntax hatası").strip()
+        raise RuntimeError("Bot söz dizimi hatalı:\n" + detail)
+
+
+def render_client_script(name: str, client_id: str, script_id: str, server_url: str, bot_source: str) -> str:
+    host = urlparse(server_url).netloc
+    return (CLIENT_TEMPLATE
+            .replace("__CLIENT_NAME__", name)
+            .replace("__CLIENT_ID__", client_id)
+            .replace("__SCRIPT_ID__", script_id)
+            .replace("__SERVER_URL__", server_url)
+            .replace("__SERVER_HOST__", host)
+            .replace("__STATIC_BOT__", embed_bot_for_loader(bot_source)))
+
+
 class CryptoCropsUltraPanel(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -665,11 +698,13 @@ class CryptoCropsUltraPanel(tk.Tk):
             self.save_settings()
             path = Path(self.bot_path_var.get().strip())
             content = path.read_text(encoding="utf-8", errors="replace")
+            validate_bot_source(content)
             res = api_json("POST", self.server_url("/admin/bot/upload"), {"file_name": path.name, "content": content}, self.admin_var.get().strip())
             self.log_line("Bot upload: " + json.dumps(res.get("bot") or res, ensure_ascii=False))
             if not res.get("success"):
                 raise RuntimeError(res.get("error") or "Bot yuklenemedi")
-            messagebox.showinfo("Tamam", "Bot servera yuklendi")
+            updated = self.refresh_generated_scripts(content)
+            messagebox.showinfo("Tamam", f"Bot servera yüklendi.\nYerel script güncellemesi: {updated}")
         except Exception as exc:
             self.log_line("Bot upload hata: " + str(exc))
             messagebox.showerror("Hata", str(exc))
@@ -683,6 +718,7 @@ class CryptoCropsUltraPanel(tk.Tk):
             content = bot_path.read_text(encoding="utf-8", errors="replace")
             if not content.strip():
                 raise RuntimeError("Bot dosyası boş")
+            validate_bot_source(content)
             client_id = "ccu_" + secrets.token_hex(8)
             script_id = "script_" + secrets.token_hex(8)
             user_name = self.license_name_var.get().strip() or self.next_user_name()
@@ -703,14 +739,7 @@ class CryptoCropsUltraPanel(tk.Tk):
                 raise RuntimeError(lic_res.get("error") or "Lisans olusmadi")
             lic = lic_res["license"]
             server_url = self.server_var.get().strip().rstrip("/")
-            host = urlparse(server_url).netloc
-            script = (CLIENT_TEMPLATE
-                      .replace("__CLIENT_NAME__", user_name)
-                      .replace("__CLIENT_ID__", client_id)
-                      .replace("__SCRIPT_ID__", script_id)
-                      .replace("__SERVER_URL__", server_url)
-                      .replace("__SERVER_HOST__", host)
-                      .replace("__STATIC_BOT__", embed_bot_for_loader(content)))
+            script = render_client_script(user_name, client_id, script_id, server_url, content)
             out_path = GENERATED_DIR / f"{safe_name(user_name)}_{client_id[:8]}.user.js"
             out_path.write_text(script, encoding="utf-8")
             index = load_json(SCRIPT_INDEX_FILE, {})
@@ -724,6 +753,28 @@ class CryptoCropsUltraPanel(tk.Tk):
         except Exception as exc:
             self.log_line("Script hata: " + str(exc))
             messagebox.showerror("Hata", str(exc))
+
+    def refresh_generated_scripts(self, content: str) -> int:
+        """Refresh the bot payload in panel-managed script files after an upload."""
+        updated = 0
+        for path in GENERATED_DIR.glob("*.user.js"):
+            try:
+                existing = path.read_text(encoding="utf-8", errors="replace")
+                name = re.search(r"const CLIENT_NAME = '([^']*)';", existing)
+                client_id = re.search(r"const CLIENT_ID = '([^']*)';", existing)
+                script_id = re.search(r"const SCRIPT_ID = '([^']*)';", existing)
+                server_url = re.search(r"const SERVER_URL = '([^']*)';", existing)
+                if not all((name, client_id, script_id, server_url)):
+                    continue
+                fresh = render_client_script(name.group(1), client_id.group(1), script_id.group(1), server_url.group(1), content)
+                validate_bot_source(fresh)
+                path.write_text(fresh, encoding="utf-8")
+                updated += 1
+            except Exception as exc:
+                self.log_line(f"Script güncellenemedi ({path.name}): {exc}")
+        if updated:
+            self.log_line(f"Yeni bot {updated} yerel script dosyasına işlendi")
+        return updated
 
     def refresh_licenses(self, silent=False):
         try:
