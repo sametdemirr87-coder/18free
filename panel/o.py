@@ -55,6 +55,9 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const API_PREFIX = '/cryptocrops';
     const STORAGE_KEY = 'cryptocrops_ultra_auth_' + CLIENT_ID;
     const GLOBAL_STORAGE_KEY = 'cryptocrops_ultra_auth_latest';
+    // Session token is deliberately short-lived; this key is per generated
+    // script and survives token renewal, page reloads, and server restarts.
+    const LICENSE_KEY_STORAGE = 'cryptocrops_ultra_license_key_' + CLIENT_ID;
     const TELEGRAM_URL = '';
     const TELEGRAM_ICON = '';
     let sessionToken = '';
@@ -127,6 +130,13 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         try { localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
         try { GM_setValue(STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
         try { GM_setValue(GLOBAL_STORAGE_KEY, JSON.stringify(payload || {})); } catch(e) {}
+        const licenseKey = String((payload || {}).license_key || '').trim();
+        // Never erase this fallback on a transient session error. A disabled
+        // license is still refused by the server on the next silent check.
+        if (licenseKey) {
+            try { localStorage.setItem(LICENSE_KEY_STORAGE, licenseKey); } catch(e) {}
+            try { GM_setValue(LICENSE_KEY_STORAGE, licenseKey); } catch(e) {}
+        }
     }
 
     function loadAuth() {
@@ -173,7 +183,14 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     }
 
     function getSavedLicenseKey() {
-        return String((loadAuth() || {}).license_key || '').trim();
+        const current = String((loadAuth() || {}).license_key || '').trim();
+        if (current) return current;
+        try {
+            const saved = String(GM_getValue(LICENSE_KEY_STORAGE) || '').trim();
+            if (saved) return saved;
+        } catch(e) {}
+        try { return String(localStorage.getItem(LICENSE_KEY_STORAGE) || '').trim(); } catch(e) {}
+        return '';
     }
 
     function showGate(message = '') {
