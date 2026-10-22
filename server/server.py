@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
@@ -72,6 +72,13 @@ class LicenseCreatePayload(BaseModel):
 
 class BotUploadPayload(BaseModel):
     file_name: str = "botfree.txt"
+    content: str
+
+
+class ScriptPackagePayload(BaseModel):
+    license_id: str
+    client_id: str
+    script_id: str
     content: str
 
 
@@ -670,6 +677,39 @@ def cryptocrops_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str |
     return admin_bot_upload_for_app(payload, x_admin_token, CROPCROPS_APP_KEY)
 
 
+@app.post("/cryptocrops/admin/script/upload")
+def cryptocrops_admin_script_upload(payload: ScriptPackagePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    state = app_state(CROPCROPS_APP_KEY)
+    lic = find_license_by_id(payload.license_id, CROPCROPS_APP_KEY)
+    if not lic:
+        return {"success": False, "error": "Lisans bulunamadi"}
+    if str(lic.get("allowed_client_id") or "") != str(payload.client_id or ""):
+        return {"success": False, "error": "Script lisans kimligiyle eslesmiyor"}
+    if not payload.content.strip() or len(payload.content) > 2_000_000:
+        return {"success": False, "error": "Gecersiz script paketi"}
+    packages = state.setdefault("script_packages", {})
+    packages[str(payload.script_id)] = {
+        "license_id": str(payload.license_id),
+        "client_id": str(payload.client_id),
+        "content": payload.content,
+        "updated_at": utc_now(),
+    }
+    save_state(force=True)
+    return {"success": True, "script_id": payload.script_id}
+
+
+@app.get("/cryptocrops/script/{script_id}.user.js")
+def cryptocrops_script_update(script_id: str, client_id: str) -> Response:
+    package = (app_state(CROPCROPS_APP_KEY).get("script_packages") or {}).get(script_id) or {}
+    if str(package.get("client_id") or "") != str(client_id or ""):
+        raise HTTPException(status_code=404, detail="Script bulunamadi")
+    content = str(package.get("content") or "")
+    if not content:
+        raise HTTPException(status_code=404, detail="Script bulunamadi")
+    return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
 def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
     ensure_shapes()
     state = app_state(app_key)
@@ -817,6 +857,9 @@ def admin_license_delete_for_app(payload: dict[str, Any], x_admin_token: str | N
     license_id = str(payload.get("license_id") or "")
     before = len(state.get("licenses") or [])
     state["licenses"] = [x for x in state.get("licenses", []) if x.get("id") != license_id]
+    if app_key == CROPCROPS_APP_KEY:
+        packages = state.get("script_packages") or {}
+        state["script_packages"] = {key: value for key, value in packages.items() if str(value.get("license_id") or "") != license_id}
     save_state(force=True)
     return {"success": True, "deleted": before - len(state["licenses"])}
 
@@ -958,6 +1001,7 @@ def ensure_shapes() -> None:
         RUNTIME_STATE[app_key].setdefault("licenses", [])
         RUNTIME_STATE[app_key].setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
         RUNTIME_STATE[app_key].setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
+    RUNTIME_STATE[CROPCROPS_APP_KEY].setdefault("script_packages", {})
     for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[AZTLACOIN_APP_KEY], RUNTIME_STATE[CROPCROPS_APP_KEY]):
         for lic in state.get("licenses") or []:
             if not isinstance(lic, dict):

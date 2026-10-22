@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import subprocess
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
@@ -32,9 +33,11 @@ DEFAULT_SETTINGS = {
 CLIENT_TEMPLATE = r'''// ==UserScript==
 // @name         __CLIENT_NAME__
 // @namespace    nexus.cryptocrops.ultra
-// @version      1.0.0
+// @version      1.0.__SCRIPT_BUILD__
 // @description  Nexus CryptoCrops Ultra secure loader
 // @match        https://cryptocrops.net/*
+// @downloadURL  __SERVER_URL__/cryptocrops/script/__SCRIPT_ID__.user.js?client_id=__CLIENT_ID__
+// @updateURL    __SERVER_URL__/cryptocrops/script/__SCRIPT_ID__.user.js?client_id=__CLIENT_ID__
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -579,6 +582,7 @@ def render_client_script(name: str, client_id: str, script_id: str, server_url: 
             .replace("__SCRIPT_ID__", script_id)
             .replace("__SERVER_URL__", server_url)
             .replace("__SERVER_HOST__", host)
+            .replace("__SCRIPT_BUILD__", str(int(time.time())))
             .replace("__STATIC_BOT__", embed_bot_for_loader(bot_source)))
 
 
@@ -745,6 +749,7 @@ class CryptoCropsUltraPanel(tk.Tk):
             index = load_json(SCRIPT_INDEX_FILE, {})
             index[str(lic.get("id") or "")] = str(out_path)
             save_json(SCRIPT_INDEX_FILE, index)
+            self.publish_script_package(str(lic.get("id") or ""), client_id, script_id, script)
             self.log_line("Script uretildi: " + str(out_path))
             self.refresh_licenses(silent=True)
             self.license_name_var.set(self.next_user_name())
@@ -754,9 +759,23 @@ class CryptoCropsUltraPanel(tk.Tk):
             self.log_line("Script hata: " + str(exc))
             messagebox.showerror("Hata", str(exc))
 
+    def publish_script_package(self, license_id: str, client_id: str, script_id: str, content: str) -> None:
+        if not license_id:
+            return
+        result = api_json("POST", self.server_url("/admin/script/upload"), {
+            "license_id": license_id,
+            "client_id": client_id,
+            "script_id": script_id,
+            "content": content,
+        }, self.admin_var.get().strip())
+        if not result.get("success"):
+            raise RuntimeError(result.get("error") or "Script guncelleme paketi yuklenemedi")
+
     def refresh_generated_scripts(self, content: str) -> int:
         """Refresh the bot payload in panel-managed script files after an upload."""
         updated = 0
+        index = load_json(SCRIPT_INDEX_FILE, {})
+        license_by_path = {str(Path(value).resolve()): license_id for license_id, value in index.items()}
         for path in GENERATED_DIR.glob("*.user.js"):
             try:
                 existing = path.read_text(encoding="utf-8", errors="replace")
@@ -769,6 +788,7 @@ class CryptoCropsUltraPanel(tk.Tk):
                 fresh = render_client_script(name.group(1), client_id.group(1), script_id.group(1), server_url.group(1), content)
                 validate_bot_source(fresh)
                 path.write_text(fresh, encoding="utf-8")
+                self.publish_script_package(license_by_path.get(str(path.resolve()), ""), client_id.group(1), script_id.group(1), fresh)
                 updated += 1
             except Exception as exc:
                 self.log_line(f"Script güncellenemedi ({path.name}): {exc}")
