@@ -21,9 +21,11 @@ BOT_BUNDLE_KEY = "minerbytsfree_bot_bundle"
 FLASH_BOT_BUNDLE_KEY = "zuncia_bot_bundle"
 AZTLACOIN_BOT_BUNDLE_KEY = "aztlacoin_bot_bundle"
 CROPCROPS_BOT_BUNDLE_KEY = "cryptocrops_bot_bundle"
+LIGHTNING_BOT_BUNDLE_KEY = "lightningminer_bot_bundle"
 FLASH_APP_KEY = "zuncia"
 AZTLACOIN_APP_KEY = "aztlacoin"
 CROPCROPS_APP_KEY = "cryptocrops"
+LIGHTNING_APP_KEY = "lightningminer"
 
 app = FastAPI(title=config.APP_NAME)
 app.add_middleware(
@@ -58,6 +60,12 @@ RUNTIME_STATE: dict[str, Any] = {
         "licenses": [],
         "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
         "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
+    },
+    LIGHTNING_APP_KEY: {
+        "licenses": [],
+        "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
+        "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
+        "script_packages": {},
     },
 }
 
@@ -130,6 +138,8 @@ def app_state(app_key: str = "minerbyts") -> dict[str, Any]:
         return RUNTIME_STATE[AZTLACOIN_APP_KEY]
     if app_key == CROPCROPS_APP_KEY:
         return RUNTIME_STATE[CROPCROPS_APP_KEY]
+    if app_key == LIGHTNING_APP_KEY:
+        return RUNTIME_STATE[LIGHTNING_APP_KEY]
     return RUNTIME_STATE
 
 
@@ -140,6 +150,8 @@ def app_label(app_key: str = "minerbyts") -> str:
         return "aztlacoin"
     if app_key == CROPCROPS_APP_KEY:
         return "cryptocrops"
+    if app_key == LIGHTNING_APP_KEY:
+        return "lightningminer"
     return "minerbyts"
 
 
@@ -612,6 +624,139 @@ def aztlacoin_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | N
     return admin_bot_upload_for_app(payload, x_admin_token, AZTLACOIN_APP_KEY)
 
 
+@app.get("/lightningminer/health")
+def lightningminer_health() -> dict[str, Any]:
+    ensure_shapes()
+    state = app_state(LIGHTNING_APP_KEY)
+    bundle = state.get("bot_bundle") or {}
+    return {
+        "success": True,
+        "project": LIGHTNING_APP_KEY,
+        "status": RUNTIME_STATE.get("status", "unknown"),
+        "time": utc_now(),
+        "supabase": bool(SUPABASE),
+        "license_count": len(state.get("licenses") or []),
+        "bot_uploaded": bool(bundle.get("content")),
+        "bot_hash": bundle.get("hash", ""),
+        "last_tamper_lock": state.get("last_tamper_lock", {}),
+        "last_tamper_miss": state.get("last_tamper_miss", {}),
+    }
+
+
+@app.post("/lightningminer/api/auth")
+def lightningminer_api_auth(payload: AuthPayload) -> dict[str, Any]:
+    return api_auth_for_app(payload, LIGHTNING_APP_KEY)
+
+
+@app.post("/lightningminer/api/heartbeat")
+def lightningminer_api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
+    return api_heartbeat_for_app(payload, LIGHTNING_APP_KEY)
+
+
+@app.post("/lightningminer/api/tamper/report")
+def lightningminer_api_tamper(payload: TamperPayload) -> dict[str, Any]:
+    return api_tamper_report_for_app(payload, LIGHTNING_APP_KEY)
+
+
+@app.get("/lightningminer/api/tamper/report.gif")
+def lightningminer_api_tamper_beacon(
+    token: str | None = None,
+    license_key: str | None = None,
+    client_id: str | None = None,
+    script_id: str | None = None,
+    account_id: str | None = None,
+    reason: str = "f12",
+    source: str = "beacon",
+    page: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, Any]:
+    return api_tamper_report_for_app(TamperPayload(
+        token=token,
+        license_key=license_key,
+        client_id=client_id,
+        script_id=script_id,
+        account_id=account_id,
+        reason=reason,
+        source=source,
+        page=page,
+        user_agent=user_agent,
+    ), LIGHTNING_APP_KEY)
+
+
+@app.get("/lightningminer/api/bot/bundle")
+def lightningminer_api_bundle(token: str, client_id: str, script_id: str | None = None, account_id: str | None = None) -> dict[str, Any]:
+    return api_bot_bundle_for_app(token, client_id, script_id, account_id, LIGHTNING_APP_KEY)
+
+
+@app.get("/lightningminer/admin/licenses")
+def lightningminer_admin_licenses(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    mark_stale_offline()
+    return {"success": True, "licenses": [sanitize_license(x) for x in app_state(LIGHTNING_APP_KEY).get("licenses", [])]}
+
+
+@app.post("/lightningminer/admin/license/create")
+def lightningminer_admin_license_create(payload: LicenseCreatePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_create_for_app(payload, x_admin_token, LIGHTNING_APP_KEY)
+
+
+@app.post("/lightningminer/admin/license/toggle")
+def lightningminer_admin_license_toggle(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_toggle_for_app(payload, x_admin_token, LIGHTNING_APP_KEY)
+
+
+@app.post("/lightningminer/admin/license/key")
+def lightningminer_admin_license_key(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_key_for_app(payload, x_admin_token, LIGHTNING_APP_KEY)
+
+
+@app.post("/lightningminer/admin/license/delete")
+def lightningminer_admin_license_delete(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_delete_for_app(payload, x_admin_token, LIGHTNING_APP_KEY)
+
+
+@app.post("/lightningminer/admin/license/tamper-clear")
+def lightningminer_admin_license_tamper_clear(payload: dict[str, Any], x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_license_tamper_clear_for_app(payload, x_admin_token, LIGHTNING_APP_KEY)
+
+
+@app.post("/lightningminer/admin/bot/upload")
+def lightningminer_admin_bot_upload(payload: BotUploadPayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    return admin_bot_upload_for_app(payload, x_admin_token, LIGHTNING_APP_KEY)
+
+
+@app.post("/lightningminer/admin/script/upload")
+def lightningminer_admin_script_upload(payload: ScriptPackagePayload, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin(x_admin_token)
+    state = app_state(LIGHTNING_APP_KEY)
+    lic = find_license_by_id(payload.license_id, LIGHTNING_APP_KEY)
+    if not lic:
+        return {"success": False, "error": "Lisans bulunamadi"}
+    if str(lic.get("allowed_client_id") or "") != str(payload.client_id or ""):
+        return {"success": False, "error": "Script lisans kimligiyle eslesmiyor"}
+    if not payload.content.strip() or len(payload.content) > 2_000_000:
+        return {"success": False, "error": "Gecersiz script paketi"}
+    state.setdefault("script_packages", {})[str(payload.script_id)] = {
+        "license_id": str(payload.license_id),
+        "client_id": str(payload.client_id),
+        "content": payload.content,
+        "updated_at": utc_now(),
+    }
+    save_state(force=True)
+    return {"success": True, "script_id": payload.script_id}
+
+
+@app.get("/lightningminer/script/{script_id}.user.js")
+def lightningminer_script_update(script_id: str, client_id: str) -> Response:
+    package = (app_state(LIGHTNING_APP_KEY).get("script_packages") or {}).get(script_id) or {}
+    if str(package.get("client_id") or "") != str(client_id or ""):
+        raise HTTPException(status_code=404, detail="Script bulunamadi")
+    content = str(package.get("content") or "")
+    if not content:
+        raise HTTPException(status_code=404, detail="Script bulunamadi")
+    return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/cryptocrops/health")
 def cryptocrops_health() -> dict[str, Any]:
     ensure_shapes()
@@ -857,7 +1002,7 @@ def admin_license_delete_for_app(payload: dict[str, Any], x_admin_token: str | N
     license_id = str(payload.get("license_id") or "")
     before = len(state.get("licenses") or [])
     state["licenses"] = [x for x in state.get("licenses", []) if x.get("id") != license_id]
-    if app_key == CROPCROPS_APP_KEY:
+    if app_key in (CROPCROPS_APP_KEY, LIGHTNING_APP_KEY):
         packages = state.get("script_packages") or {}
         state["script_packages"] = {key: value for key, value in packages.items() if str(value.get("license_id") or "") != license_id}
     save_state(force=True)
@@ -996,13 +1141,14 @@ def ensure_shapes() -> None:
     RUNTIME_STATE.setdefault("licenses", [])
     RUNTIME_STATE.setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
     RUNTIME_STATE.setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
-    for app_key in (FLASH_APP_KEY, AZTLACOIN_APP_KEY, CROPCROPS_APP_KEY):
+    for app_key in (FLASH_APP_KEY, AZTLACOIN_APP_KEY, CROPCROPS_APP_KEY, LIGHTNING_APP_KEY):
         RUNTIME_STATE.setdefault(app_key, {})
         RUNTIME_STATE[app_key].setdefault("licenses", [])
         RUNTIME_STATE[app_key].setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
         RUNTIME_STATE[app_key].setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
     RUNTIME_STATE[CROPCROPS_APP_KEY].setdefault("script_packages", {})
-    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[AZTLACOIN_APP_KEY], RUNTIME_STATE[CROPCROPS_APP_KEY]):
+    RUNTIME_STATE[LIGHTNING_APP_KEY].setdefault("script_packages", {})
+    for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[AZTLACOIN_APP_KEY], RUNTIME_STATE[CROPCROPS_APP_KEY], RUNTIME_STATE[LIGHTNING_APP_KEY]):
         for lic in state.get("licenses") or []:
             if not isinstance(lic, dict):
                 continue
@@ -1142,7 +1288,7 @@ def summarize_bot_bundle(app_key: str = "minerbyts") -> dict[str, Any]:
 
 
 def generate_license_key(app_key: str = "minerbyts") -> str:
-    prefix = "ZNC" if app_key == FLASH_APP_KEY else ("AZT" if app_key == AZTLACOIN_APP_KEY else "MBF")
+    prefix = "ZNC" if app_key == FLASH_APP_KEY else ("AZT" if app_key == AZTLACOIN_APP_KEY else ("NXL" if app_key == LIGHTNING_APP_KEY else "MBF"))
     return prefix + "-" + "-".join(secrets.token_hex(2).upper() for _ in range(4))
 
 
@@ -1151,6 +1297,8 @@ def default_bot_name(app_key: str = "minerbyts") -> str:
         return "NECUS-ZUNCIA-BOT-2.txt"
     if app_key == AZTLACOIN_APP_KEY:
         return "botazalt.txt"
+    if app_key == LIGHTNING_APP_KEY:
+        return "BotLig.txt"
     return "botfree.txt"
 
 
@@ -1211,6 +1359,10 @@ def load_bot_bundle() -> None:
         rows = result.data or []
         if rows and isinstance(rows[0].get("value"), dict):
             RUNTIME_STATE[CROPCROPS_APP_KEY]["bot_bundle"] = rows[0]["value"]
+        result = SUPABASE.table("app_state").select("value").eq("key", LIGHTNING_BOT_BUNDLE_KEY).limit(1).execute()
+        rows = result.data or []
+        if rows and isinstance(rows[0].get("value"), dict):
+            RUNTIME_STATE[LIGHTNING_APP_KEY]["bot_bundle"] = rows[0]["value"]
         RUNTIME_STATE.pop("bot_storage_error", None)
     except Exception as exc:
         RUNTIME_STATE["bot_storage_error"] = str(exc)
@@ -1243,6 +1395,11 @@ def save_state(force: bool = False) -> None:
     cryptocrops_bot.pop("content", None)
     cryptocrops_state["bot_bundle"] = cryptocrops_bot
     payload[CROPCROPS_APP_KEY] = cryptocrops_state
+    lightning_state = dict(payload.get(LIGHTNING_APP_KEY) or {})
+    lightning_bot = dict(lightning_state.get("bot_bundle") or {})
+    lightning_bot.pop("content", None)
+    lightning_state["bot_bundle"] = lightning_bot
+    payload[LIGHTNING_APP_KEY] = lightning_state
     save_app_state(APP_STATE_KEY, payload, "storage_error")
 
 
@@ -1255,6 +1412,8 @@ def save_bot_bundle(force: bool = False, app_key: str = "minerbyts") -> None:
         save_app_state(AZTLACOIN_BOT_BUNDLE_KEY, RUNTIME_STATE[AZTLACOIN_APP_KEY].get("bot_bundle") or {}, "aztlacoin_bot_storage_error")
     elif app_key == CROPCROPS_APP_KEY:
         save_app_state(CROPCROPS_BOT_BUNDLE_KEY, RUNTIME_STATE[CROPCROPS_APP_KEY].get("bot_bundle") or {}, "cryptocrops_bot_storage_error")
+    elif app_key == LIGHTNING_APP_KEY:
+        save_app_state(LIGHTNING_BOT_BUNDLE_KEY, RUNTIME_STATE[LIGHTNING_APP_KEY].get("bot_bundle") or {}, "lightning_bot_storage_error")
     else:
         save_app_state(BOT_BUNDLE_KEY, RUNTIME_STATE.get("bot_bundle") or {}, "bot_storage_error")
 
@@ -1273,7 +1432,7 @@ def save_app_state(key: str, value: dict[str, Any], error_key: str) -> None:
 def mark_stale_offline() -> None:
     now = time.time()
     changed = False
-    for state in (RUNTIME_STATE, RUNTIME_STATE.get(FLASH_APP_KEY) or {}, RUNTIME_STATE.get(AZTLACOIN_APP_KEY) or {}):
+    for state in (RUNTIME_STATE, RUNTIME_STATE.get(FLASH_APP_KEY) or {}, RUNTIME_STATE.get(AZTLACOIN_APP_KEY) or {}, RUNTIME_STATE.get(CROPCROPS_APP_KEY) or {}, RUNTIME_STATE.get(LIGHTNING_APP_KEY) or {}):
         for lic in state.get("licenses") or []:
             seen = parse_time(lic.get("last_seen_at"))
             if lic.get("online") and seen and now - seen > 120:
