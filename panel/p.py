@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import secrets
+import re
 from pathlib import Path
 from tkinter import messagebox
 
@@ -142,6 +143,150 @@ def build_client_template() -> str:
     gate_start = source.index("    function showGate(")
     gate_end = source.index("    function removeGate()", gate_start)
     source = source[:gate_start] + CUBE_GATE + source[gate_end:]
+
+    # LightningMiner botu uretilen userscript'in icine zaten gomuludur. Sayfa
+    # yenilemelerinde bot paketini tekrar indirmek yerine son basarili lisans
+    # durumuyla yerel kopyayi hemen baslat, lisansi arka planda dogrula.
+    source = source.replace(
+        "    let releaseEmbeddedBot = null;\n",
+        "    let releaseEmbeddedBot = null;\n"
+        "    let embeddedBotStarted = false;\n"
+        "    const LICENSE_CACHE_MAX_AGE = 5 * 60 * 1000;\n",
+        1,
+    )
+
+    source, count = re.subn(
+        r"    async function heartbeat\(\) \{[\s\S]*?\n    \}\n\n    async function fetchAndRunBot\(\) \{[\s\S]*?\n    \}",
+        r'''    function prepareEmbeddedBot() {
+        if (!loadedBotHash) loadedBotHash = 'embedded:' + SCRIPT_ID;
+        window.__MINERBYTSFREE_CLIENT__ = {
+            serverUrl: SERVER_URL,
+            clientId: CLIENT_ID,
+            scriptId: SCRIPT_ID,
+            sessionToken,
+            accountId: collectAccountId(),
+            botHash: loadedBotHash,
+            source: 'embedded-cache'
+        };
+    }
+
+    function startEmbeddedBot() {
+        prepareEmbeddedBot();
+        if (embeddedBotStarted) return;
+        embeddedBotStarted = true;
+        if (releaseEmbeddedBot) {
+            const release = releaseEmbeddedBot;
+            releaseEmbeddedBot = null;
+            release();
+        }
+    }
+
+    function deactivateEmbeddedBot(message) {
+        const savedKey = getSavedLicenseKey();
+        sessionToken = '';
+        loadedBotHash = '';
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+        saveAuth({ license_key:savedKey, license_active:false, validated_at:Date.now() });
+        showGate(message || 'License or script is inactive.');
+        setGateStatus(message || 'License or script is inactive.', true);
+        setTimeout(() => location.reload(), 900);
+    }
+
+    async function heartbeat() {
+        if (!sessionToken) return;
+        const res = await gmRequest('POST', apiUrl(API_PREFIX + '/api/heartbeat'), {
+            token: sessionToken,
+            client_id: CLIENT_ID,
+            script_id: SCRIPT_ID,
+            account_id: collectAccountId(),
+            page: location.href
+        });
+        if (res && res.success) {
+            const saved = loadAuth() || {};
+            saveAuth({ ...saved, session_token:sessionToken, license_active:true, validated_at:Date.now() });
+            return;
+        }
+        const errorText = (res && res.error) || 'Session expired.';
+        if (isTransientError(errorText)) {
+            const savedKey = getSavedLicenseKey();
+            if (savedKey) scheduleSilentUnlock(savedKey, 10000);
+            return;
+        }
+        deactivateEmbeddedBot(errorText);
+    }''',
+        source,
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError("Lightning loader heartbeat/bundle blogu bulunamadi")
+
+    source = source.replace(
+        "            await fetchAndRunBot();",
+        "            prepareEmbeddedBot();",
+        1,
+    )
+    source = source.replace(
+        "        if (releaseEmbeddedBot) {\n"
+        "            const release = releaseEmbeddedBot;\n"
+        "            releaseEmbeddedBot = null;\n"
+        "            release();\n"
+        "        }",
+        "        startEmbeddedBot();",
+        1,
+    )
+
+    old_boot = '''    function boot() {
+        const savedKey = getSavedLicenseKey();
+        if (savedKey) {
+            unlockWithKey(savedKey, true);
+            return;
+        }
+        showGate();
+    }'''
+    new_boot = '''    function boot() {
+        const savedKey = getSavedLicenseKey();
+        const cached = loadAuth() || {};
+        const cacheFresh = cached.license_active === true
+            && Date.now() - Number(cached.validated_at || 0) <= LICENSE_CACHE_MAX_AGE;
+        if (savedKey && cacheFresh) {
+            sessionToken = String(cached.session_token || '');
+            startEmbeddedBot();
+            unlockWithKey(savedKey, true);
+            return;
+        }
+        if (savedKey) {
+            unlockWithKey(savedKey, true);
+            return;
+        }
+        showGate();
+    }'''
+    if old_boot not in source:
+        raise RuntimeError("Lightning loader boot blogu bulunamadi")
+    source = source.replace(old_boot, new_boot, 1)
+
+    source = source.replace(
+        "saveAuth({ license_key: licenseKey, session_token: sessionToken, account_id: accountId });",
+        "saveAuth({ license_key: licenseKey, session_token: sessionToken, account_id: accountId, license_active:true, validated_at:Date.now() });",
+        1,
+    )
+    auth_failure_anchor = '''            if (silent && isTransientError(errorText)) {
+                scheduleSilentUnlock(key, 10000);
+                return;
+            }
+            if (!uiRoot) showGate((auth && auth.error) || 'License check failed.');'''
+    auth_failure_replacement = '''            if (silent && isTransientError(errorText)) {
+                scheduleSilentUnlock(key, 10000);
+                return;
+            }
+            if (embeddedBotStarted) {
+                deactivateEmbeddedBot(errorText);
+                return;
+            }
+            if (!uiRoot) showGate((auth && auth.error) || 'License check failed.');'''
+    if auth_failure_anchor not in source:
+        raise RuntimeError("Lightning loader auth hata blogu bulunamadi")
+    source = source.replace(auth_failure_anchor, auth_failure_replacement, 1)
     return source
 
 
@@ -173,6 +318,11 @@ class LightningMinerPanel(base_panel.CryptoCropsUltraPanel):
     def __init__(self):
         super().__init__()
         self.title("LightningMiner Nexus Panel")
+        # LightningMiner paneli her zaman guncel, kanonik bot paketini kullanir.
+        # Eski secimler (ornegin .codex/botlightning.txt v2.4.0) yeni uretilen
+        # scriptleri sessizce geriye dusurmemelidir.
+        self.bot_path_var.set(str(BOT_FILE))
+        self.settings["selected_bot_path"] = str(BOT_FILE)
         self._rebrand_widgets(self)
 
     def _rebrand_widgets(self, widget):
