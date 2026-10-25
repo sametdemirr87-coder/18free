@@ -69,20 +69,20 @@ CUBE_GATE = r'''    function showGate(message = '') {
                         <div class="cube-half right">${'<i class="tile"></i>'.repeat(6)}</div>
                     </div>
                     <div class="nfg-card">
-                        <div class="nfg-kicker">Nexus secure core</div>
-                        <div class="nfg-title">LightningMind Cube</div>
-                        <div class="nfg-copy">Akil kupunu birlestirmek icin lisans anahtarini gir.</div>
-                        <div class="nfg-field"><input class="nfg-input" id="nfgKey" placeholder="NXL-XXXX-XXXX-XXXX-XXXX" value="${escapeAttr(saved)}" autocomplete="off" spellcheck="false"><span class="nfg-keydot"></span></div>
-                        <button class="nfg-btn" id="nfgUnlock">KUPU BIRLESTIR</button>
+                        <div class="nfg-kicker">NEXUS SECURE</div>
+                        <div class="nfg-title">LightningMind Nexus Bot</div>
+                        <div class="nfg-copy">Nexus License Key</div>
+                        <div class="nfg-field"><input class="nfg-input" id="nfgKey" placeholder="ENTER NEXUS LICENSE KEY" value="${escapeAttr(saved)}" autocomplete="off" spellcheck="false"><span class="nfg-keydot"></span></div>
+                        <button class="nfg-btn" id="nfgUnlock">ACTIVATE KEY</button>
                         <div class="nfg-loader"></div>
-                        <div class="nfg-status" id="nfgStatus">${escapeHtml(message || 'Anahtar bekleniyor...')}</div>
+                        <div class="nfg-status" id="nfgStatus">${escapeHtml(message || 'Waiting for your license key...')}</div>
                     </div>
                 </div>`;
             document.documentElement.appendChild(uiRoot);
             setTimeout(() => { if (uiRoot) uiRoot.classList.add('nfg-ready'); }, 3450);
             document.getElementById('nfgUnlock').onclick = async () => {
                 const key = String(document.getElementById('nfgKey').value || '').trim();
-                if (!key) { setGateStatus('Lutfen lisans anahtarini gir.', true); return; }
+                if (!key) { setGateStatus('Please enter your Nexus license key.', true); return; }
                 await unlockWithKey(key);
             };
             document.getElementById('nfgKey').addEventListener('keydown', (event) => {
@@ -113,7 +113,7 @@ CUBE_GATE = r'''    function showGate(message = '') {
         return new Promise((resolve) => {
             if (!uiRoot) return resolve();
             uiRoot.classList.add('nfg-success');
-            setGateStatus('Anahtar dogru. Bot baslatiliyor...', false);
+            setGateStatus('Key activated. Launching Nexus Bot...', false);
             setTimeout(resolve, 2650);
         });
     }
