@@ -24,7 +24,7 @@ GENERATED_DIR.mkdir(exist_ok=True)
 SCRIPT_INDEX_FILE = BASE_DIR / "generated_aztlacoin_scripts_index.json"
 
 DEFAULT_SETTINGS = {
-    "server_url": "https://one8free.onrender.com",
+    "server_url": "https://nexus-active-passive.yakuptoraman588.workers.dev",
     "admin_token": "MbfAdmin_18free!7429",
     "selected_bot_path": str(BOT_FILE),
 }
@@ -585,8 +585,10 @@ class AztlaCoinPanel(tk.Tk):
         self.license_name_var = tk.StringVar(value="User1")
         self.license_key_var = tk.StringVar(value="")
         self.multi_var = tk.BooleanVar(value=False)
+        self.server_status_var = tk.StringVar(value="Cloudflare: kontrol ediliyor | Render: kontrol ediliyor")
         self.tree_menu = None
         self.build_ui()
+        self.after(350, self.refresh_server_status)
         self.refresh_licenses(silent=True)
 
     def build_ui(self):
@@ -598,7 +600,7 @@ class AztlaCoinPanel(tk.Tk):
         header = tk.Frame(self, bg="#0b1020")
         header.pack(fill="x", padx=18, pady=(16, 10))
         tk.Label(header, text="AZTLACOIN VIP PANEL", bg="#0b1020", fg="#f472b6", font=("Segoe UI", 18, "bold")).pack(side="left")
-        tk.Label(header, text="Server bagli: one8free.onrender.com", bg="#0b1020", fg="#64748b", font=("Segoe UI", 10, "bold")).pack(side="right")
+        tk.Label(header, textvariable=self.server_status_var, bg="#0b1020", fg="#22c55e", font=("Segoe UI", 10, "bold")).pack(side="right")
 
         main = tk.Frame(self, bg="#0b1020")
         main.pack(fill="both", expand=True, padx=18, pady=(0, 14))
@@ -914,6 +916,18 @@ class AztlaCoinPanel(tk.Tk):
         except Exception as exc:
             self.log_line("Health hata: " + str(exc))
             messagebox.showerror("Hata", str(exc))
+
+    def refresh_server_status(self):
+        try:
+            base = self.server_var.get().strip().rstrip("/")
+            res = api_json("GET", base + "/__router/status", None, self.admin_var.get().strip())
+            mode = str(res.get("mode") or "secondary")
+            if mode == "primary":
+                self.server_status_var.set("Render: AKTIF  |  Cloudflare: BEKLEME")
+            else:
+                self.server_status_var.set("Cloudflare: AKTIF  |  Render: BEKLEME")
+        except Exception:
+            self.server_status_var.set("Cloudflare Gateway: BAGLANTI HATASI")
 
     def server_url(self, path: str) -> str:
         return self.server_var.get().strip().rstrip("/") + path
