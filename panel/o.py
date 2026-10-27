@@ -532,7 +532,15 @@ def save_json(path: Path, data) -> None:
 
 def api_json(method: str, url: str, payload=None, admin_token: str = ""):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/140.0.0.0 Safari/537.36"
+        ),
+    }
     if admin_token:
         headers["x-admin-token"] = admin_token
     req = urlrequest.Request(url, data=data, headers=headers, method=method.upper())
