@@ -22,6 +22,8 @@ FLASH_BOT_BUNDLE_KEY = "zuncia_bot_bundle"
 AZTLACOIN_BOT_BUNDLE_KEY = "aztlacoin_bot_bundle"
 CROPCROPS_BOT_BUNDLE_KEY = "cryptocrops_bot_bundle"
 LIGHTNING_BOT_BUNDLE_KEY = "lightningminer_bot_bundle"
+CROPCROPS_SCRIPT_PACKAGES_KEY = "cryptocrops_script_packages"
+LIGHTNING_SCRIPT_PACKAGES_KEY = "lightningminer_script_packages"
 FLASH_APP_KEY = "zuncia"
 AZTLACOIN_APP_KEY = "aztlacoin"
 CROPCROPS_APP_KEY = "cryptocrops"
@@ -127,6 +129,7 @@ def startup_event() -> None:
     SUPABASE = build_supabase_client()
     load_state()
     load_bot_bundle()
+    load_script_packages()
     ensure_shapes()
 
 
@@ -225,7 +228,6 @@ def api_heartbeat(payload: HeartbeatPayload) -> dict[str, Any]:
     lic["online"] = True
     lic["last_seen_at"] = utc_now()
     lic["last_page"] = payload.page or ""
-    save_state(force=False)
     return {"success": True, "server_time": utc_now(), "settings": RUNTIME_STATE.get("settings", {})}
 
 
@@ -742,7 +744,7 @@ def lightningminer_admin_script_upload(payload: ScriptPackagePayload, x_admin_to
         "content": payload.content,
         "updated_at": utc_now(),
     }
-    save_state(force=True)
+    save_script_packages(LIGHTNING_APP_KEY)
     return {"success": True, "script_id": payload.script_id}
 
 
@@ -840,7 +842,7 @@ def cryptocrops_admin_script_upload(payload: ScriptPackagePayload, x_admin_token
         "content": payload.content,
         "updated_at": utc_now(),
     }
-    save_state(force=True)
+    save_script_packages(CROPCROPS_APP_KEY)
     return {"success": True, "script_id": payload.script_id}
 
 
@@ -899,7 +901,6 @@ def api_heartbeat_for_app(payload: HeartbeatPayload, app_key: str) -> dict[str, 
     lic["online"] = True
     lic["last_seen_at"] = utc_now()
     lic["last_page"] = payload.page or ""
-    save_state(force=False)
     return {"success": True, "server_time": utc_now(), "settings": app_state(app_key).get("settings", {})}
 
 
@@ -1005,6 +1006,7 @@ def admin_license_delete_for_app(payload: dict[str, Any], x_admin_token: str | N
     if app_key in (CROPCROPS_APP_KEY, LIGHTNING_APP_KEY):
         packages = state.get("script_packages") or {}
         state["script_packages"] = {key: value for key, value in packages.items() if str(value.get("license_id") or "") != license_id}
+        save_script_packages(app_key)
     save_state(force=True)
     return {"success": True, "deleted": before - len(state["licenses"])}
 
@@ -1368,6 +1370,29 @@ def load_bot_bundle() -> None:
         RUNTIME_STATE["bot_storage_error"] = str(exc)
 
 
+def load_script_packages() -> None:
+    """Load large userscript packages separately from frequently saved runtime state."""
+    if not SUPABASE:
+        return
+    for app_key, storage_key in (
+        (CROPCROPS_APP_KEY, CROPCROPS_SCRIPT_PACKAGES_KEY),
+        (LIGHTNING_APP_KEY, LIGHTNING_SCRIPT_PACKAGES_KEY),
+    ):
+        legacy_packages = app_state(app_key).get("script_packages") or {}
+        try:
+            result = SUPABASE.table("app_state").select("value").eq("key", storage_key).limit(1).execute()
+            rows = result.data or []
+            stored = rows[0].get("value") if rows else None
+            if isinstance(stored, dict):
+                app_state(app_key)["script_packages"] = stored
+            elif legacy_packages:
+                # One-time migration from the old runtime-state row. Future heartbeat
+                # saves never upload these multi-megabyte packages again.
+                save_app_state(storage_key, legacy_packages, f"{app_key}_script_storage_error")
+        except Exception as exc:
+            RUNTIME_STATE[f"{app_key}_script_storage_error"] = str(exc)
+
+
 def save_state(force: bool = False) -> None:
     global LAST_SYNC_EPOCH
     if not SUPABASE:
@@ -1394,11 +1419,13 @@ def save_state(force: bool = False) -> None:
     cryptocrops_bot = dict(cryptocrops_state.get("bot_bundle") or {})
     cryptocrops_bot.pop("content", None)
     cryptocrops_state["bot_bundle"] = cryptocrops_bot
+    cryptocrops_state.pop("script_packages", None)
     payload[CROPCROPS_APP_KEY] = cryptocrops_state
     lightning_state = dict(payload.get(LIGHTNING_APP_KEY) or {})
     lightning_bot = dict(lightning_state.get("bot_bundle") or {})
     lightning_bot.pop("content", None)
     lightning_state["bot_bundle"] = lightning_bot
+    lightning_state.pop("script_packages", None)
     payload[LIGHTNING_APP_KEY] = lightning_state
     save_app_state(APP_STATE_KEY, payload, "storage_error")
 
@@ -1416,6 +1443,14 @@ def save_bot_bundle(force: bool = False, app_key: str = "minerbyts") -> None:
         save_app_state(LIGHTNING_BOT_BUNDLE_KEY, RUNTIME_STATE[LIGHTNING_APP_KEY].get("bot_bundle") or {}, "lightning_bot_storage_error")
     else:
         save_app_state(BOT_BUNDLE_KEY, RUNTIME_STATE.get("bot_bundle") or {}, "bot_storage_error")
+
+
+def save_script_packages(app_key: str) -> None:
+    if not SUPABASE or app_key not in (CROPCROPS_APP_KEY, LIGHTNING_APP_KEY):
+        return
+    storage_key = CROPCROPS_SCRIPT_PACKAGES_KEY if app_key == CROPCROPS_APP_KEY else LIGHTNING_SCRIPT_PACKAGES_KEY
+    packages = app_state(app_key).get("script_packages") or {}
+    save_app_state(storage_key, packages, f"{app_key}_script_storage_error")
 
 
 def save_app_state(key: str, value: dict[str, Any], error_key: str) -> None:
