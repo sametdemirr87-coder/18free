@@ -32,7 +32,7 @@ DEFAULT_SETTINGS = {
 CLIENT_TEMPLATE = r'''// ==UserScript==
 // @name         __CLIENT_NAME__
 // @namespace    nexus.zuncia.loader
-// @version      1.0.1
+// @version      1.0.3
 // @description  Nexus Zuncia Bot secure loader
 // @match        https://zuncia.com/game/*
 // @match        https://www.zuncia.com/game/*
@@ -40,6 +40,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @connect      __SERVER_HOST__
+// @connect      127.0.0.1
+// @connect      localhost
 // @run-at       document-start
 // ==/UserScript==
 
@@ -62,10 +64,12 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     });
     const STORAGE_KEY = 'zuncia_auth_' + CLIENT_ID;
     const GLOBAL_STORAGE_KEY = 'zuncia_auth_latest';
+    const BOT_CACHE_KEY = 'zuncia_bot_cache_' + CLIENT_ID;
     const TELEGRAM_URL = 'https://t.me/+cxRPV2-7C_Y0Yjc0';
     const TELEGRAM_ICON = 'https://telegram.org/img/favicon.ico';
     let sessionToken = '';
     let loadedBotHash = '';
+    let authenticatedBotHash = '';
     let heartbeatTimer = null;
     let uiRoot = null;
     let reauthInProgress = false;
@@ -434,6 +438,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         });
         if (res && res.success) {
             sessionToken = res.token || '';
+            authenticatedBotHash = String((res.bot && res.bot.hash) || '');
             saveAuth({ license_key: licenseKey, session_token: sessionToken, account_id: accountId });
         }
         return res;
@@ -463,11 +468,23 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     }
 
     async function fetchAndRunBot() {
-        const qs = '?token=' + encodeURIComponent(sessionToken)
-            + '&client_id=' + encodeURIComponent(CLIENT_ID)
-            + '&script_id=' + encodeURIComponent(SCRIPT_ID)
-            + '&account_id=' + encodeURIComponent(collectAccountId());
-        const bundle = await gmGet(apiUrl('/zuncia/api/bot/bundle') + qs);
+        let bundle = null;
+        try {
+            const cached = JSON.parse(String(GM_getValue(BOT_CACHE_KEY) || 'null'));
+            if (cached && cached.encrypted && authenticatedBotHash && cached.hash === authenticatedBotHash) {
+                bundle = { ...cached, success:true };
+            }
+        } catch(e) {}
+        if (!bundle) {
+            const qs = '?token=' + encodeURIComponent(sessionToken)
+                + '&client_id=' + encodeURIComponent(CLIENT_ID)
+                + '&script_id=' + encodeURIComponent(SCRIPT_ID)
+                + '&account_id=' + encodeURIComponent(collectAccountId());
+            bundle = await gmGet(apiUrl('/zuncia/api/bot/bundle') + qs);
+            if (bundle && bundle.success && bundle.encrypted) {
+                try { GM_setValue(BOT_CACHE_KEY, JSON.stringify({ hash:bundle.hash || '', encrypted:bundle.encrypted })); } catch(e) {}
+            }
+        }
         if (!bundle || !bundle.success) {
             throw new Error((bundle && bundle.error) || 'Bot could not be loaded');
         }
@@ -487,7 +504,11 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         globalThis.__MINERBYTSFREE_CLIENT__ = window.__MINERBYTSFREE_CLIENT__;
         window.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
         globalThis.__MINERBYTSFREE_REPORT_F12__ = reportSecurityLockFromBot;
-        (0, eval)(code);
+        // Pass privileged APIs explicitly. A downloaded bundle otherwise cannot
+        // reliably resolve Tampermonkey's GM bindings in every sandbox mode.
+        window.__NEXUS_ZUNCIA_LOADER_VERSION__ = '1.0.3';
+        const runBot = new Function('GM_xmlhttpRequest', 'GM', code);
+        runBot(GM_xmlhttpRequest, typeof GM === 'undefined' ? undefined : GM);
         injectTelegramButton();
     }
 

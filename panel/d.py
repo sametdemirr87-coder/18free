@@ -51,10 +51,12 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const SCRIPT_ID = '__SCRIPT_ID__';
     const STORAGE_KEY = 'minerbytsfree_auth_' + CLIENT_ID;
     const GLOBAL_STORAGE_KEY = 'minerbytsfree_auth_latest';
+    const BOT_CACHE_KEY = 'minerbytsfree_bot_cache_' + CLIENT_ID;
     const TELEGRAM_URL = 'https://t.me/+cxRPV2-7C_Y0Yjc0';
     const TELEGRAM_ICON = 'https://telegram.org/img/favicon.ico';
     let sessionToken = '';
     let loadedBotHash = '';
+    let authenticatedBotHash = '';
     let heartbeatTimer = null;
     let uiRoot = null;
     let reauthInProgress = false;
@@ -338,6 +340,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         });
         if (res && res.success) {
             sessionToken = res.token || '';
+            authenticatedBotHash = String((res.bot && res.bot.hash) || '');
             saveAuth({ license_key: licenseKey, session_token: sessionToken, account_id: accountId });
         }
         return res;
@@ -367,11 +370,23 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     }
 
     async function fetchAndRunBot() {
-        const qs = '?token=' + encodeURIComponent(sessionToken)
-            + '&client_id=' + encodeURIComponent(CLIENT_ID)
-            + '&script_id=' + encodeURIComponent(SCRIPT_ID)
-            + '&account_id=' + encodeURIComponent(collectAccountId());
-        const bundle = await gmGet(apiUrl('/api/bot/bundle') + qs);
+        let bundle = null;
+        try {
+            const cached = JSON.parse(String(GM_getValue(BOT_CACHE_KEY) || 'null'));
+            if (cached && cached.encrypted && authenticatedBotHash && cached.hash === authenticatedBotHash) {
+                bundle = { ...cached, success:true };
+            }
+        } catch(e) {}
+        if (!bundle) {
+            const qs = '?token=' + encodeURIComponent(sessionToken)
+                + '&client_id=' + encodeURIComponent(CLIENT_ID)
+                + '&script_id=' + encodeURIComponent(SCRIPT_ID)
+                + '&account_id=' + encodeURIComponent(collectAccountId());
+            bundle = await gmGet(apiUrl('/api/bot/bundle') + qs);
+            if (bundle && bundle.success && bundle.encrypted) {
+                try { GM_setValue(BOT_CACHE_KEY, JSON.stringify({ hash:bundle.hash || '', encrypted:bundle.encrypted })); } catch(e) {}
+            }
+        }
         if (!bundle || !bundle.success) {
             throw new Error((bundle && bundle.error) || 'Bot could not be loaded');
         }

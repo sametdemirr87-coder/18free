@@ -140,6 +140,27 @@ def build_client_template() -> str:
     }
     for old, new in replacements.items():
         source = source.replace(old, new)
+    # Tampermonkey guncelleme karsilastirmasini botun gercek surumuyle yapar.
+    # Zaman damgali 1.0.x metadatasi bot icindeki v2.x surumunden kopuyor ve
+    # guncel paket sunucuda olsa bile "guncelleme bulunamadi" sonucuna yol
+    # acabiliyordu.
+    bot_source = BOT_FILE.read_text(encoding="utf-8", errors="replace") if BOT_FILE.is_file() else ""
+    version_match = re.search(r"const VERSION\s*=\s*['\"]([^'\"]+)['\"]", bot_source)
+    if version_match:
+        source = source.replace(
+            "// @version      1.0.__SCRIPT_BUILD__",
+            f"// @version      {version_match.group(1)}",
+            1,
+        )
+    # GM izinleri loader'i Violentmonkey sandbox'ina alir. Lightning botunun
+    # sayfanin kendi Turnstile nesnesine erisebilmesi icin gercek window
+    # koprusunu acikca yetkilendir.
+    if "// @grant        unsafeWindow" not in source:
+        source = source.replace(
+            "// @grant        GM_getValue\n",
+            "// @grant        GM_getValue\n// @grant        unsafeWindow\n",
+            1,
+        )
     gate_start = source.index("    function showGate(")
     gate_end = source.index("    function removeGate()", gate_start)
     source = source[:gate_start] + CUBE_GATE + source[gate_end:]

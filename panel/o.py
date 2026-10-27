@@ -62,6 +62,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     const TELEGRAM_ICON = '';
     let sessionToken = '';
     let loadedBotHash = '';
+    let authenticatedBot = null;
     let heartbeatTimer = null;
     let uiRoot = null;
     let reauthInProgress = false;
@@ -372,6 +373,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         });
         if (res && res.success) {
             sessionToken = res.token || '';
+            authenticatedBot = res.bot || null;
             saveAuth({ license_key: licenseKey, session_token: sessionToken, account_id: accountId });
         }
         return res;
@@ -401,16 +403,12 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     }
 
     async function fetchAndRunBot() {
-        const qs = '?token=' + encodeURIComponent(sessionToken)
-            + '&client_id=' + encodeURIComponent(CLIENT_ID)
-            + '&script_id=' + encodeURIComponent(SCRIPT_ID)
-            + '&account_id=' + encodeURIComponent(collectAccountId());
-        const bundle = await gmGet(apiUrl(API_PREFIX + '/api/bot/bundle') + qs);
-        if (!bundle || !bundle.success) {
-            throw new Error((bundle && bundle.error) || 'Bot could not be loaded');
-        }
-        if (bundle.hash && loadedBotHash === bundle.hash) return;
-        loadedBotHash = bundle.hash || '';
+        // CryptoCrops botu uretilen userscript'in icine gomuludur. Lisans
+        // cevabinda hash zaten geliyor; sayfa/CAPTCHA yenilemelerinde buyuk bot
+        // paketini tekrar indirmek gereksiz bant genisligi harciyordu.
+        loadedBotHash = (authenticatedBot && authenticatedBot.hash)
+            || loadedBotHash
+            || ('embedded:' + SCRIPT_ID);
         window.__MINERBYTSFREE_CLIENT__ = {
             serverUrl: SERVER_URL,
             clientId: CLIENT_ID,
