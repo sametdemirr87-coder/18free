@@ -69,6 +69,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let silentRetryTimer = null;
     let banRequestSent = false;
     let releaseEmbeddedBot = null;
+    let telegramConfigured = false;
+    const TELEGRAM_OWNER_KEY = 'nexus.cryptocrops.telegram.owner-client.v1';
     globalThis.__NEXUS_CROPCROPS_ULTRA_START__ = new Promise((resolve) => { releaseEmbeddedBot = resolve; });
 
     function gmRequest(method, url, body, attempt = 0) {
@@ -374,7 +376,9 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         if (res && res.success) {
             sessionToken = res.token || '';
             authenticatedBot = res.bot || null;
+            telegramConfigured = !!(res.license && res.license.telegram_configured);
             saveAuth({ license_key: licenseKey, session_token: sessionToken, account_id: accountId });
+            if (telegramConfigured) localStorage.setItem(TELEGRAM_OWNER_KEY, CLIENT_ID);
         }
         return res;
     }
@@ -453,6 +457,16 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             if (!uiRoot) showGate(errorText);
             setGateLoading(false, errorText);
             setGateStatus(errorText, true);
+            return;
+        }
+        if (!telegramConfigured) await new Promise(resolve => setTimeout(resolve, 3000));
+        let browserOwner = String(localStorage.getItem(TELEGRAM_OWNER_KEY) || '');
+        if (!browserOwner) {
+            localStorage.setItem(TELEGRAM_OWNER_KEY, CLIENT_ID);
+            browserOwner = String(localStorage.getItem(TELEGRAM_OWNER_KEY) || '');
+        }
+        if (browserOwner !== CLIENT_ID) {
+            removeGate();
             return;
         }
         if (!silent) await showGateSuccess();

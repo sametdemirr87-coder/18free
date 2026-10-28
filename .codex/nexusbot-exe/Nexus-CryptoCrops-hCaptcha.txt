@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus CryptoCrops Botrqssssssü
 // @namespace    nexus.cryptocrops.local
-// @version      0.9.3
+// @version      0.9.4
 // @match        https://cryptocrops.net/*
 // @match        https://*.hcaptcha.com/*hcaptcha-challenge*
 // @match        https://*.hcaptcha.com/*checkbox*
@@ -55,6 +55,7 @@
     const STYLE_ID = 'nx5-style';
     const STORAGE_KEY = 'nexus.cryptocrops.bot.v5';
     const TELEGRAM_SETTINGS_KEY = 'nexus.cryptocrops.telegram.private.v1';
+    const TELEGRAM_OWNER_KEY = 'nexus.cryptocrops.telegram.owner-client.v1';
     const WINDOW_PREFIX = 'nx5-window-';
     const RELOAD_STATE_KEY = 'nexus.cryptocrops.resume-after-captcha';
     const CAPTCHA_RELOAD_STATE = (()=>{
@@ -66,6 +67,9 @@
         return null;
     })();
 
+    const telegramOwnerClient=String(localStorage.getItem(TELEGRAM_OWNER_KEY)||'');
+    const currentNexusClient=window.__MINERBYTSFREE_CLIENT__||globalThis.__MINERBYTSFREE_CLIENT__||{};
+    if(telegramOwnerClient&&currentNexusClient.clientId&&telegramOwnerClient!==String(currentNexusClient.clientId))return;
     if(window[INSTANCE_KEY]?.destroy) window[INSTANCE_KEY].destroy();
     document.querySelectorAll(`#${ROOT_ID},#${LAUNCHER_ID},#${STYLE_ID},[id^="${WINDOW_PREFIX}"],.nx3,#nx4-root,#nx4-launcher,#nx4-style`).forEach(node => node.remove());
     document.querySelectorAll('body > button').forEach(button => {
@@ -582,7 +586,7 @@
     function shell(){
         const panel = document.createElement('section'); panel.id = ROOT_ID;
         if(state.uiPos){ panel.style.left=`${state.uiPos.x}px`; panel.style.top=`${state.uiPos.y}px`; panel.style.right='auto'; }
-        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.3</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
+        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.4</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
         document.body.appendChild(panel);
         panel.querySelector('[data-close]').onclick=hideRoot;
         panel.querySelector('[data-window="settings"]').onclick=()=>toggleWindow('settings');
