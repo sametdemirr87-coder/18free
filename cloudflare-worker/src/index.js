@@ -167,7 +167,9 @@ async function heartbeat(request, env, app) {
 
 function requireCryptoRuntime(state, body) {
   const s = appState(state, 'cryptocrops');
-  const lic = s.licenses.find(x => x.session_token && x.session_token === String(body.token || ''));
+  const token = String(body.token || '');
+  const licenseKey = String(body.license_key || '').trim();
+  const lic = s.licenses.find(x => (x.session_token && x.session_token === token) || (licenseKey && x.key === licenseKey));
   if (!lic || lic.active === false || lic.tamper_detected) throw new HttpError(403, 'Oturum gecersiz');
   const binding = validateBinding(lic, body);
   if (binding) throw new HttpError(403, binding);

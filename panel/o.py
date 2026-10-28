@@ -414,6 +414,7 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             clientId: CLIENT_ID,
             scriptId: SCRIPT_ID,
             sessionToken,
+            licenseKey: getSavedLicenseKey(),
             accountId: collectAccountId(),
             botHash: loadedBotHash
         };

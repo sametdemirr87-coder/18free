@@ -882,6 +882,8 @@ def telegram_api_call(token: str, method: str, payload: dict[str, Any]) -> tuple
 
 def require_cryptocrops_runtime(payload: dict[str, Any]) -> dict[str, Any]:
     lic = find_license_by_session(str(payload.get("token") or ""), CROPCROPS_APP_KEY)
+    if not lic and str(payload.get("license_key") or "").strip():
+        lic = find_license_by_key(str(payload.get("license_key") or "").strip(), CROPCROPS_APP_KEY)
     if not lic or lic.get("active") is False or lic.get("tamper_detected"):
         raise HTTPException(status_code=403, detail="Oturum gecersiz")
     binding_error = validate_runtime_binding(
@@ -986,8 +988,8 @@ def cryptocrops_telegram_captcha_create(payload: dict[str, Any], request: Reques
 
 
 @app.get("/cryptocrops/api/telegram/captcha/status")
-def cryptocrops_telegram_captcha_status(token: str, captcha_id: str, client_id: str = "", script_id: str = "", account_id: str = "") -> dict[str, Any]:
-    lic = require_cryptocrops_runtime({"token": token, "client_id": client_id, "script_id": script_id, "account_id": account_id})
+def cryptocrops_telegram_captcha_status(token: str, captcha_id: str, license_key: str = "", client_id: str = "", script_id: str = "", account_id: str = "") -> dict[str, Any]:
+    lic = require_cryptocrops_runtime({"token": token, "license_key": license_key, "client_id": client_id, "script_id": script_id, "account_id": account_id})
     session = cleanup_cryptocrops_captchas().get(str(captcha_id or "")) or {}
     if not session or str(session.get("license_id") or "") != str(lic.get("id") or ""):
         raise HTTPException(status_code=404, detail="CAPTCHA oturumu bulunamadi")

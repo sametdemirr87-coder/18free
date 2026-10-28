@@ -382,7 +382,7 @@
         const client=nexusClient();
         const base=String(client.serverUrl||'').replace(/\/$/,'');
         if(!base||!client.sessionToken)return Promise.resolve({success:false,error:'Nexus lisans oturumu hazir degil'});
-        const auth={token:client.sessionToken,client_id:client.clientId||'',script_id:client.scriptId||'',account_id:client.accountId||''};
+        const auth={token:client.sessionToken,license_key:client.licenseKey||'',client_id:client.clientId||'',script_id:client.scriptId||'',account_id:client.accountId||''};
         return new Promise(resolve=>{
             GM_xmlhttpRequest({method,url:base+'/cryptocrops'+path,headers:{'Content-Type':'application/json'},data:JSON.stringify({...auth,...payload}),timeout:25000,
                 onload:response=>{try{const parsed=JSON.parse(response.responseText||'{}');resolve(response.status>=200&&response.status<300?parsed:{success:false,error:parsed.detail||parsed.error||('HTTP '+response.status)});}catch{resolve({success:false,error:'Sunucu yaniti okunamadi'});}},
@@ -391,7 +391,7 @@
     }
     function telegramStatusRequest(captchaId){
         const client=nexusClient();const base=String(client.serverUrl||'').replace(/\/$/,'');
-        const query=new URLSearchParams({token:String(client.sessionToken||''),captcha_id:String(captchaId||''),client_id:String(client.clientId||''),script_id:String(client.scriptId||''),account_id:String(client.accountId||'')});
+        const query=new URLSearchParams({token:String(client.sessionToken||''),license_key:String(client.licenseKey||''),captcha_id:String(captchaId||''),client_id:String(client.clientId||''),script_id:String(client.scriptId||''),account_id:String(client.accountId||'')});
         return new Promise(resolve=>{GM_xmlhttpRequest({method:'GET',url:base+'/cryptocrops/api/telegram/captcha/status?'+query,timeout:20000,onload:r=>{try{resolve(JSON.parse(r.responseText||'{}'));}catch{resolve({success:false});}},onerror:()=>resolve({success:false}),ontimeout:()=>resolve({success:false})});});
     }
     const telegramCaptchaPollers=new Map();
