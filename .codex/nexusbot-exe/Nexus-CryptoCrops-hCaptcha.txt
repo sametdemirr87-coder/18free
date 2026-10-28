@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus CryptoCrops Botrqssssssü
 // @namespace    nexus.cryptocrops.local
-// @version      0.9.0
+// @version      0.9.1
 // @match        https://cryptocrops.net/*
 // @match        https://*.hcaptcha.com/*hcaptcha-challenge*
 // @match        https://*.hcaptcha.com/*checkbox*
@@ -13,6 +13,9 @@
 // ==/UserScript==
 (function(){
     'use strict';
+
+    const CAPTCHA_CHANNEL_NAME='nexus-cryptocrops-captcha-v1';
+    const captchaBridgeChannel=typeof BroadcastChannel==='function'?new BroadcastChannel(CAPTCHA_CHANNEL_NAME):null;
 
     // hCaptcha iframe'lerinde sadece checkbox yardimcisi calisir. Gorsel
     // dogrulama acilirsa kullanici manuel olarak tamamlar.
@@ -395,11 +398,16 @@
         return new Promise(resolve=>{GM_xmlhttpRequest({method:'GET',url:base+'/cryptocrops/api/telegram/captcha/status?'+query,timeout:20000,onload:r=>{try{resolve(JSON.parse(r.responseText||'{}'));}catch{resolve({success:false});}},onerror:()=>resolve({success:false}),ontimeout:()=>resolve({success:false})});});
     }
     const telegramCaptchaPollers=new Map();
+    const telegramCaptchaDispatches=new Map();
     async function sendCaptchaToPrivateTelegram(kind,siteKey,popupWindow){
         const settings=loadTelegramSettings();
         if(!settings.enabled||!settings.botToken||!settings.chatId||!siteKey)return;
+        const dispatchKey=String(kind||'captcha')+'|'+String(siteKey||'');
+        const previous=Number(telegramCaptchaDispatches.get(dispatchKey)||0);
+        if(Date.now()-previous<15000)return;
+        telegramCaptchaDispatches.set(dispatchKey,Date.now());
         const created=await telegramServerRequest('POST','/api/telegram/captcha/create',{kind,site_key:siteKey,page_url:location.href});
-        if(!created?.success||!created.captcha_id){log('Telegram CAPTCHA gonderilemedi: '+(created?.error||'bilinmeyen hata'),'bad');return;}
+        if(!created?.success||!created.captcha_id){telegramCaptchaDispatches.delete(dispatchKey);log('Telegram CAPTCHA gonderilemedi: '+(created?.error||'bilinmeyen hata'),'bad');return;}
         log('CAPTCHA ozel Telegram sohbetine gonderildi.','info');
         const captchaId=created.captcha_id;let attempts=0;
         const poll=async()=>{
@@ -408,6 +416,8 @@
             if(result?.success&&result.solved&&result.captcha_token){
                 telegramCaptchaPollers.delete(captchaId);
                 try{popupWindow?.postMessage({source:'nexus-telegram-captcha',type:'token',kind,captcha_token:result.captcha_token},location.origin);}catch{}
+                try{captchaBridgeChannel?.postMessage({source:'nexus-telegram-captcha',type:'token',kind,captcha_token:result.captcha_token});}catch{}
+                telegramCaptchaDispatches.delete(dispatchKey);
                 log('Telegram CAPTCHA cozumu popup penceresine aktarildi.','ok');
                 return;
             }
@@ -418,15 +428,19 @@
     }
     function installTelegramSettings(){
         if(document.getElementById('nx5-telegram-settings-button'))return;
-        const style=document.createElement('style');style.id='nx5-telegram-settings-style';style.textContent=`#nx5-telegram-settings-button{position:fixed;right:78px;bottom:18px;z-index:2147483647;width:50px;height:50px;border-radius:50%;border:1px solid #62c881;background:linear-gradient(145deg,#183d29,#0b2116);color:#8cf0aa;font-size:22px;cursor:pointer;box-shadow:0 10px 30px #0009,0 0 18px #36d66b44}#nx5-telegram-settings-button:hover{filter:brightness(1.2);transform:translateY(-2px)}#nx5-tg-overlay{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#020905cc;backdrop-filter:blur(9px)}#nx5-tg-card{width:min(430px,calc(100vw - 30px));padding:24px;border:1px solid #4c8a60;border-radius:20px;background:#0d2618;color:#edf8ef;box-shadow:0 25px 90px #000c;font-family:Segoe UI,Arial}#nx5-tg-card h3{margin:0 0 5px;color:#79e69c}#nx5-tg-card p{margin:0 0 16px;color:#9eb9a6;font-size:12px;line-height:1.45}#nx5-tg-card label{display:block;margin:11px 0 5px;color:#cfe8d5;font-size:12px;font-weight:700}#nx5-tg-card input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #416d4e;border-radius:10px;background:#06150d;color:#fff;outline:none}#nx5-tg-card .tg-row{display:flex;gap:8px;margin-top:16px}#nx5-tg-card button{flex:1;padding:11px;border:0;border-radius:10px;font-weight:800;cursor:pointer;background:#4fc878;color:#05200e}#nx5-tg-card button.secondary{background:#294535;color:#dcebe0}#nx5-tg-card button.danger{background:#77383a;color:#fff}#nx5-tg-status{min-height:18px;margin-top:12px;text-align:center;color:#a9c8b0;font-size:12px}`;document.head.append(style);
-        const button=document.createElement('button');button.id='nx5-telegram-settings-button';button.textContent='⚙';button.title='Telegram CAPTCHA Ayarlari';document.body.append(button);
+        const style=document.createElement('style');style.id='nx5-telegram-settings-style';style.textContent=`#nx5-telegram-settings-button{position:fixed;right:18px;top:82px;z-index:2147483647;width:48px;height:48px;border-radius:15px;border:1px solid #426b50;background:linear-gradient(145deg,#142d20,#08170f);color:#91a99a;font-size:22px;cursor:pointer;box-shadow:0 12px 36px #0009;transition:.22s ease}#nx5-telegram-settings-button.active{border-color:#62dc88;color:#8dffad;box-shadow:0 12px 36px #0009,0 0 20px #37df704d}#nx5-telegram-settings-button:hover{filter:brightness(1.18);transform:translateX(-3px)}#nx5-tg-overlay{position:fixed;right:18px;top:140px;z-index:2147483646;width:min(410px,calc(100vw - 36px));pointer-events:none}#nx5-tg-card{box-sizing:border-box;width:100%;padding:20px;border:1px solid #4c8a60;border-radius:20px;background:#0d2618f7;color:#edf8ef;box-shadow:0 25px 90px #000c;font-family:Segoe UI,Arial;transform:translateX(calc(100% + 38px));opacity:0;transition:transform .28s cubic-bezier(.2,.8,.2,1),opacity .2s ease;pointer-events:auto;backdrop-filter:blur(10px)}#nx5-tg-overlay.open #nx5-tg-card{transform:translateX(0);opacity:1}.nx5-tg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:5px}#nx5-tg-card h3{margin:0;color:#79e69c}.nx5-tg-switch{flex:0 0 auto!important;padding:7px 11px!important;font-size:11px!important;background:#4b3030!important;color:#ffc5c5!important}.nx5-tg-switch.active{background:#245b38!important;color:#9dffb9!important}#nx5-tg-card p{margin:0 0 14px;color:#9eb9a6;font-size:12px;line-height:1.45}#nx5-tg-card label{display:block;margin:10px 0 5px;color:#cfe8d5;font-size:12px;font-weight:700}#nx5-tg-card input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #416d4e;border-radius:10px;background:#06150d;color:#fff;outline:none}#nx5-tg-card .tg-row{display:flex;gap:8px;margin-top:15px}#nx5-tg-card button{flex:1;padding:10px;border:0;border-radius:10px;font-weight:800;cursor:pointer;background:#4fc878;color:#05200e}#nx5-tg-card button.secondary{background:#294535;color:#dcebe0}#nx5-tg-status{min-height:18px;margin-top:10px;text-align:center;color:#a9c8b0;font-size:12px}`;document.head.append(style);
+        const button=document.createElement('button');button.id='nx5-telegram-settings-button';button.textContent='✈';button.title='Telegram CAPTCHA';document.body.append(button);
+        const syncButton=()=>button.classList.toggle('active',!!loadTelegramSettings().enabled);syncButton();
+        const closeMenu=()=>{const overlay=document.getElementById('nx5-tg-overlay');if(!overlay)return;overlay.classList.remove('open');setTimeout(()=>overlay.remove(),280);};
         button.onclick=()=>{
-            document.getElementById('nx5-tg-overlay')?.remove();const saved=loadTelegramSettings();const overlay=document.createElement('div');overlay.id='nx5-tg-overlay';overlay.innerHTML=`<div id="nx5-tg-card"><h3>Telegram CAPTCHA</h3><p>Yalnizca kendi botun ve ozel sohbet Chat ID'n kabul edilir. Grup ve kanal sunucu tarafinda reddedilir.</p><label>Telegram Bot Token</label><input id="nx5-tg-token" type="password" autocomplete="off"><label>Ozel Chat ID</label><input id="nx5-tg-chat" inputmode="numeric" autocomplete="off"><div class="tg-row"><button id="nx5-tg-save">BAGLA</button><button id="nx5-tg-disable" class="danger">KAPAT</button><button id="nx5-tg-close" class="secondary">VAZGEC</button></div><div id="nx5-tg-status"></div></div>`;document.body.append(overlay);
+            if(document.getElementById('nx5-tg-overlay')){closeMenu();return;}
+            const saved=loadTelegramSettings();const overlay=document.createElement('div');overlay.id='nx5-tg-overlay';overlay.innerHTML=`<div id="nx5-tg-card"><div class="nx5-tg-head"><h3>Telegram CAPTCHA</h3><button id="nx5-tg-enabled" class="nx5-tg-switch">KAPALI</button></div><p>Continue Farming ve Faucet CAPTCHA'lari yalnizca kendi ozel Telegram sohbetine gider.</p><label>Telegram Bot Token</label><input id="nx5-tg-token" type="password" autocomplete="off"><label>Ozel Chat ID</label><input id="nx5-tg-chat" inputmode="numeric" autocomplete="off"><div class="tg-row"><button id="nx5-tg-save">BAGLA</button><button id="nx5-tg-close" class="secondary">KAPAT</button></div><div id="nx5-tg-status"></div></div>`;document.body.append(overlay);requestAnimationFrame(()=>overlay.classList.add('open'));
             overlay.querySelector('#nx5-tg-token').value=saved.botToken||'';overlay.querySelector('#nx5-tg-chat').value=saved.chatId||'';
             const status=(text,bad=false)=>{const node=overlay.querySelector('#nx5-tg-status');node.textContent=text;node.style.color=bad?'#ff9b9b':'#9df0b5';};
-            overlay.querySelector('#nx5-tg-close').onclick=()=>overlay.remove();overlay.onclick=e=>{if(e.target===overlay)overlay.remove();};
-            overlay.querySelector('#nx5-tg-save').onclick=async()=>{const botToken=overlay.querySelector('#nx5-tg-token').value.trim(),chatId=overlay.querySelector('#nx5-tg-chat').value.trim();if(!botToken||!chatId){status('Bot token ve Chat ID gerekli.',true);return;}status('Ozel sohbet dogrulaniyor...');const result=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:botToken,telegram_chat_id:chatId});if(!result?.success){status(result?.error||'Telegram baglanamadi.',true);return;}saveTelegramSettings({enabled:true,botToken,chatId});status('Baglandi. CAPTCHA yalnizca bu ozel sohbete gidecek.');};
-            overlay.querySelector('#nx5-tg-disable').onclick=async()=>{const result=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:'',telegram_chat_id:''});if(!result?.success){status(result?.error||'Kapatilamadi.',true);return;}saveTelegramSettings({enabled:false,botToken:'',chatId:''});status('Telegram CAPTCHA kapatildi.');};
+            const syncSwitch=()=>{const enabled=!!loadTelegramSettings().enabled;const node=overlay.querySelector('#nx5-tg-enabled');node.classList.toggle('active',enabled);node.textContent=enabled?'AKTIF':'KAPALI';syncButton();};syncSwitch();
+            overlay.querySelector('#nx5-tg-close').onclick=closeMenu;
+            overlay.querySelector('#nx5-tg-enabled').onclick=()=>{const current=loadTelegramSettings();if(!current.enabled&&(!current.botToken||!current.chatId)){status('Once botu bagla.',true);return;}saveTelegramSettings({...current,enabled:!current.enabled});syncSwitch();status(current.enabled?'Telegram CAPTCHA durduruldu.':'Telegram CAPTCHA aktif.');};
+            overlay.querySelector('#nx5-tg-save').onclick=async()=>{const botToken=overlay.querySelector('#nx5-tg-token').value.trim(),chatId=overlay.querySelector('#nx5-tg-chat').value.trim();if(!botToken||!chatId){status('Bot token ve Chat ID gerekli.',true);return;}status('Ozel sohbet dogrulaniyor...');const result=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:botToken,telegram_chat_id:chatId});if(!result?.success){status(result?.error||'Telegram baglanamadi.',true);return;}saveTelegramSettings({enabled:true,botToken,chatId});syncSwitch();status('Baglandi. Continue Farming ve Faucet CAPTCHA Telegrama gidecek.');};
         };
     }
 
@@ -434,7 +448,7 @@
         let clicked=false,focused=false,alarmNotified=false,challengeNotified=false,captchaMissingNotified=false;
         const approvalDeadline=Date.now()+10000;
         const captchaDetectDeadline=Date.now()+12000;
-        const send = (type, message, extra={}) => window.opener?.postMessage({ source:'nexus-faucet', type, message, ...extra }, location.origin);
+        const send = (type, message, extra={}) => {const data={source:'nexus-faucet',type,message,...extra};try{window.opener?.postMessage(data,location.origin);}catch{}try{captchaBridgeChannel?.postMessage(data);}catch{}};
         document.title='Nexus Faucet Pay';
         const style=document.createElement('style');
         style.textContent=`html,body{width:100%!important;min-width:0!important;height:100%!important;margin:0!important;background:#0c2119!important;overflow:hidden!important}.topbar,.sidebar,.page-header,.page-title,.page-description,.page-main>aside,.page-main>.ad-slot,.earn-back-link,.demo-warning,.activity-card:not(.faucet-page-card),body>button{display:none!important}.app-shell,.page-main{display:block!important;width:100%!important;height:100%!important;margin:0!important;padding:0!important;max-width:none!important}#page-content,.page-content{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;margin:0!important;padding:16px!important;display:grid!important;place-items:center!important}#page-content>*:not(.faucet-page-card),.page-content>*:not(.faucet-page-card){display:none!important}.faucet-page-card{width:min(420px,calc(100vw - 32px))!important;margin:0!important;padding:22px!important;max-width:none!important;box-shadow:0 22px 70px rgba(0,0,0,.48)!important;border-radius:16px!important;display:grid!important;place-items:stretch!important}.faucet-page-card>:not(.faucet-verification):not([data-claim-faucet]):not(#nexus-hcaptcha-status){display:none!important}.faucet-verification{display:grid!important;place-items:center!important;margin:0!important;padding:0!important;min-height:112px!important}.faucet-verification>:not(.faucet-turnstile){display:none!important}.faucet-turnstile{display:grid!important;place-items:center!important;width:100%!important;margin:0!important}.h-captcha,[data-hcaptcha-widget-id],iframe[src*="hcaptcha.com"],iframe[title*="hCaptcha"]{display:block!important;margin:0 auto!important;visibility:visible!important;opacity:1!important}.faucet-page-card [data-claim-faucet]{display:block!important;width:100%!important;margin-top:14px!important}#nexus-hcaptcha-status{margin:12px 0 0!important;text-align:center;font:12px Arial,sans-serif;color:#a8bdad}`;
@@ -447,7 +461,8 @@
         const challengeOpen=()=>[...document.querySelectorAll('iframe')].some(node=>/challenge/i.test(node.title||'')&&node.getBoundingClientRect().width>200&&node.getBoundingClientRect().height>180&&getComputedStyle(node).visibility!=='hidden');
         const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);return url.searchParams.get('sitekey')||url.searchParams.get('k')||'';}catch{return '';}};
         let telegramSent=false;
-        window.addEventListener('message',event=>{if(event.origin!==location.origin||event.data?.source!=='nexus-telegram-captcha'||event.data.type!=='token')return;const token=String(event.data.captcha_token||'');if(token.length<20)return;document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]').forEach(node=>{node.value=token;node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));});const button=document.querySelector('[data-claim-faucet]');if(button){button.disabled=false;button.removeAttribute('disabled');}status('Telegram CAPTCHA cozumu alindi; islem tamamlaniyor…');});
+        const applyTelegramToken=data=>{if(data?.source!=='nexus-telegram-captcha'||data.type!=='token')return;const token=String(data.captcha_token||'');if(token.length<20)return;document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]').forEach(node=>{node.value=token;node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));});const button=document.querySelector('[data-claim-faucet]');if(button){button.disabled=false;button.removeAttribute('disabled');}status('Telegram CAPTCHA cozumu alindi; islem tamamlaniyor…');};
+        window.addEventListener('message',event=>{if(event.origin===location.origin)applyTelegramToken(event.data);});if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>applyTelegramToken(event.data);
         const id = setInterval(() => {
             const captcha=frame(),button=document.querySelector('[data-claim-faucet]');
             if(captcha&&!telegramSent){const key=siteKey();if(key){telegramSent=true;send('telegram-captcha','',{site_key:key,kind:'faucet'});}}
@@ -479,7 +494,7 @@
         let wasOpen=false,continueClicked=false,focused=false,alarmNotified=false,challengeNotified=false,captchaMissingNotified=false;
         let captchaDetectDeadline=0;
         let approvalDeadline=0;
-        const send=(type,extra={})=>window.opener?.postMessage({source:'nexus-farm-checkpoint',type,...extra},location.origin);
+        const send=(type,extra={})=>{const data={source:'nexus-farm-checkpoint',type,...extra};try{window.opener?.postMessage(data,location.origin);}catch{}try{captchaBridgeChannel?.postMessage(data);}catch{}};
         document.title='Nexus Farm Security';
         const style=document.createElement('style');
         style.textContent=`body{min-width:0!important;background:#0c2119!important;overflow:hidden!important}.topbar,.sidebar,.main-content,#nx5-root,#nx5-launcher,[id^="nx5-window-"]{display:none!important}.app-shell{display:block!important}.farm-recaptcha-backdrop{position:fixed!important;inset:0!important;background:#0c2119!important}.farm-checkpoint-dialog{width:min(440px,calc(100vw - 24px))!important;max-height:calc(100vh - 24px)!important;margin:auto!important}.farm-checkpoint-card{box-shadow:none!important;padding:18px!important}.farm-checkpoint-card>header,.farm-checkpoint-card>h1,.farm-checkpoint-card>h2,#farm-checkpoint-title{display:none!important}.farm-checkpoint-card>p,.farm-checkpoint-card .description,.farm-checkpoint-card .checkpoint-description,.farm-checkpoint-card .security-copy{display:none!important}.farm-checkpoint-card a,.farm-checkpoint-card .try-again,.farm-checkpoint-card [data-refresh-checkpoint]{display:none!important}.farm-checkpoint-widget{margin:0!important}.farm-checkpoint-widget>img,.farm-checkpoint-widget>label,#farm-number-answer{display:none!important}.h-captcha,[data-hcaptcha-widget-id],iframe[src*="hcaptcha.com"],iframe[title*="hCaptcha"]{display:block!important;margin:12px auto!important;visibility:visible!important;opacity:1!important}#farm-hold-button{display:block!important;width:100%!important;margin-top:14px!important}#nexus-engine-status{margin:10px 0;text-align:center;font:12px Arial,sans-serif;color:#a8bdad}`;
@@ -490,7 +505,8 @@
         const challengeOpen=()=>[...document.querySelectorAll('iframe')].some(node=>/challenge/i.test(node.title||'')&&node.getBoundingClientRect().width>200&&node.getBoundingClientRect().height>180&&getComputedStyle(node).visibility!=='hidden');
         const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);return url.searchParams.get('sitekey')||url.searchParams.get('k')||'';}catch{return '';}};
         let telegramSent=false;
-        window.addEventListener('message',event=>{if(event.origin!==location.origin||event.data?.source!=='nexus-telegram-captcha'||event.data.type!=='token')return;const token=String(event.data.captcha_token||'');if(token.length<20)return;document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]').forEach(node=>{node.value=token;node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));});const button=document.querySelector('#farm-hold-button');if(button){button.disabled=false;button.removeAttribute('disabled');}status('Telegram CAPTCHA cozumu alindi; ciftlige donuluyor…');});
+        const applyTelegramToken=data=>{if(data?.source!=='nexus-telegram-captcha'||data.type!=='token')return;const token=String(data.captcha_token||'');if(token.length<20)return;document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]').forEach(node=>{node.value=token;node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));});const button=document.querySelector('#farm-hold-button');if(button){button.disabled=false;button.removeAttribute('disabled');}status('Telegram CAPTCHA cozumu alindi; ciftlige donuluyor…');};
+        window.addEventListener('message',event=>{if(event.origin===location.origin)applyTelegramToken(event.data);});if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>applyTelegramToken(event.data);
         const id=setInterval(()=>{
             const dialog=document.querySelector('#farm-checkpoint-dialog');
             if(dialog?.open){
@@ -960,10 +976,10 @@
         }else if(!faucetIsReady())state.faucetReadyKey='';
     }
     function destroy(){
-        state.destroyed=true;clearTimeout(state.cycleTimer);clearTimeout(state.faucetRetryTimer);clearTimeout(state.checkpointRetryTimer);telegramCaptchaPollers.forEach(clearTimeout);telegramCaptchaPollers.clear();timers.forEach(clearInterval);timers.clear();window.removeEventListener('message',onMessage);
+        state.destroyed=true;clearTimeout(state.cycleTimer);clearTimeout(state.faucetRetryTimer);clearTimeout(state.checkpointRetryTimer);telegramCaptchaPollers.forEach(clearTimeout);telegramCaptchaPollers.clear();telegramCaptchaDispatches.clear();timers.forEach(clearInterval);timers.clear();window.removeEventListener('message',onMessage);try{captchaBridgeChannel?.close();}catch{}
         document.querySelectorAll(`#${ROOT_ID},#${LAUNCHER_ID},#${STYLE_ID},[id^="${WINDOW_PREFIX}"]`).forEach(node=>node.remove());
         if(window[INSTANCE_KEY]?.destroy===destroy)delete window[INSTANCE_KEY];
     }
 
-    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.0'};load();scheduleCycle(1200);
+    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>onMessage({origin:location.origin,data:event.data,source:null});timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.1'};load();scheduleCycle(1200);
 })();
