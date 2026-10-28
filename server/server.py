@@ -1452,6 +1452,7 @@ def sanitize_license(item: dict[str, Any]) -> dict[str, Any]:
         "tamper_reason": item.get("tamper_reason", ""),
         "tamper_at": item.get("tamper_at", ""),
         "tamper_report": item.get("tamper_report", {}),
+        "telegram_configured": bool(item.get("telegram_token") and item.get("telegram_chat_id")),
         "created_at": item.get("created_at", ""),
         "last_seen_at": item.get("last_seen_at", ""),
         "last_page": item.get("last_page", ""),

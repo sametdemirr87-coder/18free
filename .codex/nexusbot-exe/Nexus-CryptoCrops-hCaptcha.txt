@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus CryptoCrops Botrqssssssü
 // @namespace    nexus.cryptocrops.local
-// @version      0.9.1
+// @version      0.9.2
 // @match        https://cryptocrops.net/*
 // @match        https://*.hcaptcha.com/*hcaptcha-challenge*
 // @match        https://*.hcaptcha.com/*checkbox*
@@ -53,6 +53,7 @@
     const STYLE_ID = 'nx5-style';
     const STORAGE_KEY = 'nexus.cryptocrops.bot.v5';
     const TELEGRAM_SETTINGS_KEY = 'nexus.cryptocrops.telegram.private.v1';
+    const TELEGRAM_OWNER_KEY = 'nexus.cryptocrops.telegram.owner-client.v1';
     const WINDOW_PREFIX = 'nx5-window-';
     const RELOAD_STATE_KEY = 'nexus.cryptocrops.resume-after-captcha';
     const CAPTCHA_RELOAD_STATE = (()=>{
@@ -64,6 +65,9 @@
         return null;
     })();
 
+    const telegramOwnerClient=String(localStorage.getItem(TELEGRAM_OWNER_KEY)||'');
+    const currentNexusClient=window.__MINERBYTSFREE_CLIENT__||globalThis.__MINERBYTSFREE_CLIENT__||{};
+    if(telegramOwnerClient&&currentNexusClient.clientId&&telegramOwnerClient!==String(currentNexusClient.clientId))return;
     if(window[INSTANCE_KEY]?.destroy) window[INSTANCE_KEY].destroy();
     document.querySelectorAll(`#${ROOT_ID},#${LAUNCHER_ID},#${STYLE_ID},[id^="${WINDOW_PREFIX}"],.nx3,#nx4-root,#nx4-launcher,#nx4-style`).forEach(node => node.remove());
     document.querySelectorAll('body > button').forEach(button => {
@@ -440,7 +444,7 @@
             const syncSwitch=()=>{const enabled=!!loadTelegramSettings().enabled;const node=overlay.querySelector('#nx5-tg-enabled');node.classList.toggle('active',enabled);node.textContent=enabled?'AKTIF':'KAPALI';syncButton();};syncSwitch();
             overlay.querySelector('#nx5-tg-close').onclick=closeMenu;
             overlay.querySelector('#nx5-tg-enabled').onclick=()=>{const current=loadTelegramSettings();if(!current.enabled&&(!current.botToken||!current.chatId)){status('Once botu bagla.',true);return;}saveTelegramSettings({...current,enabled:!current.enabled});syncSwitch();status(current.enabled?'Telegram CAPTCHA durduruldu.':'Telegram CAPTCHA aktif.');};
-            overlay.querySelector('#nx5-tg-save').onclick=async()=>{const botToken=overlay.querySelector('#nx5-tg-token').value.trim(),chatId=overlay.querySelector('#nx5-tg-chat').value.trim();if(!botToken||!chatId){status('Bot token ve Chat ID gerekli.',true);return;}status('Ozel sohbet dogrulaniyor...');const result=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:botToken,telegram_chat_id:chatId});if(!result?.success){status(result?.error||'Telegram baglanamadi.',true);return;}saveTelegramSettings({enabled:true,botToken,chatId});syncSwitch();status('Baglandi. Continue Farming ve Faucet CAPTCHA Telegrama gidecek.');};
+            overlay.querySelector('#nx5-tg-save').onclick=async()=>{const botToken=overlay.querySelector('#nx5-tg-token').value.trim(),chatId=overlay.querySelector('#nx5-tg-chat').value.trim();if(!botToken||!chatId){status('Bot token ve Chat ID gerekli.',true);return;}status('Ozel sohbet dogrulaniyor...');const result=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:botToken,telegram_chat_id:chatId});if(!result?.success){status(result?.error||'Telegram baglanamadi.',true);return;}saveTelegramSettings({enabled:true,botToken,chatId});const owner=nexusClient();if(owner.clientId)localStorage.setItem(TELEGRAM_OWNER_KEY,String(owner.clientId));syncSwitch();status('Baglandi. Continue Farming ve Faucet CAPTCHA Telegrama gidecek.');};
         };
     }
 
@@ -575,7 +579,7 @@
     function shell(){
         const panel = document.createElement('section'); panel.id = ROOT_ID;
         if(state.uiPos){ panel.style.left=`${state.uiPos.x}px`; panel.style.top=`${state.uiPos.y}px`; panel.style.right='auto'; }
-        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.0</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
+        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.2</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
         document.body.appendChild(panel);
         panel.querySelector('[data-close]').onclick=hideRoot;
         panel.querySelector('[data-window="settings"]').onclick=()=>toggleWindow('settings');
@@ -981,5 +985,5 @@
         if(window[INSTANCE_KEY]?.destroy===destroy)delete window[INSTANCE_KEY];
     }
 
-    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>onMessage({origin:location.origin,data:event.data,source:null});timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.1'};load();scheduleCycle(1200);
+    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>onMessage({origin:location.origin,data:event.data,source:null});timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.2'};load();scheduleCycle(1200);
 })();

@@ -411,7 +411,7 @@ function validateBinding(lic, body) {
 function sanitize(x) { return { id:x.id || '', name:x.name || '', key:x.key || '', active:x.active !== false, multi_account:!!x.multi_account,
   account_id:x.account_id || '', last_account_id:x.last_account_id || '', client_id:x.client_id || '', script_id:x.script_id || '',
   allowed_client_id:x.allowed_client_id || '', online:!!x.online, tamper_detected:!!x.tamper_detected, tamper_reason:x.tamper_reason || '',
-  tamper_at:x.tamper_at || '', tamper_report:x.tamper_report || {}, created_at:x.created_at || '', last_seen_at:x.last_seen_at || '', last_page:x.last_page || '' }; }
+  tamper_at:x.tamper_at || '', tamper_report:x.tamper_report || {}, telegram_configured:!!(x.telegram_token && x.telegram_chat_id), created_at:x.created_at || '', last_seen_at:x.last_seen_at || '', last_page:x.last_page || '' }; }
 function summarize(b) { return { name:b.name || '', hash:b.hash || '', version:b.version || 0, updated_at:b.updated_at || '', uploaded:!!b.content }; }
 function requireAdmin(request, env) { if (!env.ADMIN_TOKEN || request.headers.get('X-Admin-Token') !== env.ADMIN_TOKEN) throw new HttpError(401, 'Unauthorized'); }
 function generateKey(app) { const prefix = app === 'zuncia' ? 'ZNC' : app === 'aztlacoin' ? 'AZT' : app === 'lightningminer' ? 'NXL' : 'MBF'; return `${prefix}-${randomHex(2)}-${randomHex(2)}-${randomHex(2)}-${randomHex(2)}`.toUpperCase(); }
