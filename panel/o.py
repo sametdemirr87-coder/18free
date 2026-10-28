@@ -375,9 +375,6 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
             sessionToken = res.token || '';
             authenticatedBot = res.bot || null;
             saveAuth({ license_key: licenseKey, session_token: sessionToken, account_id: accountId });
-            if (res.license && res.license.telegram_configured) {
-                localStorage.setItem('nexus.cryptocrops.telegram.owner-client.v1', CLIENT_ID);
-            }
         }
         return res;
     }
