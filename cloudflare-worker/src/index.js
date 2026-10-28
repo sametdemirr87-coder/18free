@@ -27,6 +27,15 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     const url = new URL(request.url);
     try {
+      // Telegram CAPTCHA relay is owned by the Cloudflare secondary. Keep these
+      // routes local even while the primary API is active, otherwise an older
+      // Render deployment can answer with 404 before failover is considered.
+      if (request.method === 'POST' && url.pathname === '/cryptocrops/api/telegram/register') return withCors(await telegramRegister(request, env));
+      if (request.method === 'POST' && url.pathname === '/cryptocrops/api/telegram/captcha/create') return withCors(await telegramCaptchaCreate(request, env));
+      if (request.method === 'GET' && url.pathname === '/cryptocrops/api/telegram/captcha/status') return withCors(await telegramCaptchaStatus(request, env));
+      if (request.method === 'POST' && url.pathname === '/cryptocrops/api/telegram/captcha/solve') return withCors(await telegramCaptchaSolve(request, env));
+      const directCaptcha = url.pathname.match(/^\/cryptocrops\/telegram\/captcha\/([A-Za-z0-9_-]+)$/);
+      if (request.method === 'GET' && directCaptcha) return withCors(await telegramCaptchaPage(env, directCaptcha[1]));
       if (url.pathname.startsWith('/__router/')) return await routerAdmin(request, env);
       const control = await loadControl(env);
       if (control.mode !== 'secondary') {
