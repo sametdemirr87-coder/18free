@@ -1,0 +1,969 @@
+// ==UserScript==
+// @name         Nexus CryptoCrops Botrqssssssü
+// @namespace    nexus.cryptocrops.local
+// @version      0.9.0
+// @match        https://cryptocrops.net/*
+// @match        https://*.hcaptcha.com/*hcaptcha-challenge*
+// @match        https://*.hcaptcha.com/*checkbox*
+// @match        https://*.hcaptcha.com/*captcha*
+// @run-at       document-idle
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// ==/UserScript==
+(function(){
+    'use strict';
+
+    // hCaptcha iframe'lerinde sadece checkbox yardimcisi calisir. Gorsel
+    // dogrulama acilirsa kullanici manuel olarak tamamlar.
+    if(location.hostname === 'hcaptcha.com' || location.hostname.endsWith('.hcaptcha.com')){
+        const CHECKBOX = '#checkbox';
+        const ARIA_CHECKED = 'aria-checked';
+        const checkboxInterval = setInterval(()=>{
+            const checkbox = document.querySelector(CHECKBOX);
+            if(!checkbox)return;
+            if(checkbox.getAttribute(ARIA_CHECKED) === 'true'){
+                clearInterval(checkboxInterval);
+                return;
+            }
+            if(checkbox.offsetParent !== null && checkbox.getAttribute(ARIA_CHECKED) === 'false'){
+                checkbox.click();
+            }
+        },500);
+        setTimeout(()=>clearInterval(checkboxInterval),30000);
+        return;
+    }
+
+    const PARAMS = new URLSearchParams(location.search);
+    if(PARAMS.get('nexus_manual') === '1'){
+        runFaucetBridge();
+        return;
+    }
+    if(PARAMS.get('nexus_checkpoint') === '1'){
+        runCheckpointBridge();
+        return;
+    }
+
+    const INSTANCE_KEY = '__NEXUS_CRYPTOCROPS_BOT_V5__';
+    const ROOT_ID = 'nx5-root';
+    const LAUNCHER_ID = 'nx5-launcher';
+    const STYLE_ID = 'nx5-style';
+    const STORAGE_KEY = 'nexus.cryptocrops.bot.v5';
+    const TELEGRAM_SETTINGS_KEY = 'nexus.cryptocrops.telegram.private.v1';
+    const WINDOW_PREFIX = 'nx5-window-';
+    const RELOAD_STATE_KEY = 'nexus.cryptocrops.resume-after-captcha';
+    const CAPTCHA_RELOAD_STATE = (()=>{
+        try{
+            const value=JSON.parse(sessionStorage.getItem(RELOAD_STATE_KEY)||'null');
+            if(value&&Number(value.expires)>Date.now()&&typeof value.running==='boolean')return value;
+        }catch{}
+        sessionStorage.removeItem(RELOAD_STATE_KEY);
+        return null;
+    })();
+
+    if(window[INSTANCE_KEY]?.destroy) window[INSTANCE_KEY].destroy();
+    document.querySelectorAll(`#${ROOT_ID},#${LAUNCHER_ID},#${STYLE_ID},[id^="${WINDOW_PREFIX}"],.nx3,#nx4-root,#nx4-launcher,#nx4-style`).forEach(node => node.remove());
+    document.querySelectorAll('body > button').forEach(button => {
+        const style = getComputedStyle(button);
+        if(button.textContent?.trim() === 'NEXUS' && style.position === 'fixed' && Number(style.zIndex) > 1000000) button.remove();
+    });
+
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+    })[char]);
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const now = () => Date.now();
+    const I18N = {
+        tr:{ subtitle:'Çiftlik komuta merkezi', settings:'Ayarlar', minimize:'Küçült', activityLog:'İŞLEM GÜNLÜĞÜ', copyAll:'Tüm logları kopyala', ready:'HAZIR', closed:'KAPALI', selected:'SEÇİLİ', waiting:'BEKLİYOR', growing:'BÜYÜYOR', harvest:'HASAT', empty:'BOŞ', farmControl:'Çiftlik Kontrolü', planted:'{used}/{total} tarla ekili', fields:'TARLALAR', fieldsSub:'Tohum seç, ekim ve hasadı yönet', orders:'SİPARİŞLER', ordersSub:'Siparişleri ve Auto Tamamla\'yı yönet', barn:'BARN', barnSub:'Ürün seçimi ve satış kontrolü', earn:'EARN COINS', earnSub:'Faucet Pay ve kazanç sayacı', start:'BOTU BAŞLAT', stop:'BOTU DURDUR', separate:'Ayrı kontrol penceresi', nextSeed:'Sıradaki', chooseSeed:'TOHUM SEÇ', clear:'SEÇİMİ SİL', autoSelect:'AUTO SEÇ', autoSelected:'Uygun tohumu otomatik seçer', noSeed:'Seçilmedi', plantingWait:'Ekim bekliyor', permanent:'{free} boş / {total} kalıcı kopya', noOwnedSeed:'Sahip olunan tohum yok.', autoComplete:'Auto Tamamla', autoCompleteSub:'Sahip olunan sipariş tohumlarını boş tarlalara eker ve hazır siparişi tamamlar.', complete:'TAMAMLA', missing:'ÜRÜNLER EKSİK', noOrders:'Aktif sipariş yok.', autoSell:'Auto Sell', autoSellSub:'Tüm taze ürünleri satış sırasına alır.', fresh:'Taze {count}', select:'Seç', sellSelected:'SEÇİLENLERİ SAT', noSell:'Satılabilir ürün yok.', faucetInfo:'Yeşil seçiliyken süre bitince doğrulama penceresi otomatik açılır.', manualOpen:'MANUEL AÇ', mod2Sub:'Oyunun resmi tarla, satış ve Homestead motorunu kullanır.', fallback:'Auto 1 yedek', fallbackSub:'Motor doğrulanmazsa API akışına geçer.', language:'Dil / Language', turkish:'Türkçe', english:'English', engineFound:'Motor hazır', engineMissing:'Motor yok', logReady:'Bot hazır. Bir işlem bekleniyor.', copied:'Log panoya kopyalandı.', copyBlocked:'Pano erişimi tarayıcı tarafından engellendi.', dataRefreshed:'Çiftlik verisi yenilendi.', popupBlocked:'Popup tarayıcı tarafından engellendi.', captchaWaiting:'Faucet Pay açıldı; CAPTCHA manuel tamamlanmayı bekliyor.', treeHarvest:'{name} toplandı.', modeStarted:'Bot başladı ({mode}).', botStopped:'Bot durduruldu.', autoOpened:'Faucet Pay süresi doldu; doğrulama penceresi açıldı.' },
+        en:{ subtitle:'Farm command center', settings:'Settings', minimize:'Minimize', activityLog:'ACTIVITY LOG', copyAll:'Copy all logs', ready:'READY', closed:'OFF', selected:'SELECTED', waiting:'WAITING', growing:'GROWING', harvest:'HARVEST', empty:'EMPTY', farmControl:'Farm Control', planted:'{used}/{total} fields planted', fields:'FIELDS', fieldsSub:'Choose seeds and manage planting and harvests', orders:'ORDERS', ordersSub:'Manage orders and Auto Complete', barn:'BARN', barnSub:'Produce selection and sales control', earn:'EARN COINS', earnSub:'Faucet Pay and earnings timer', start:'START BOT', stop:'STOP BOT', separate:'Separate control window', nextSeed:'Next', chooseSeed:'CHOOSE SEED', clear:'CLEAR SELECTION', autoSelect:'AUTO SELECT', autoSelected:'Automatically chooses a suitable seed', noSeed:'Not selected', plantingWait:'Waiting to plant', permanent:'{free} free / {total} permanent copies', noOwnedSeed:'No owned seeds.', autoComplete:'Auto Complete', autoCompleteSub:'Plants owned order seeds in empty fields and completes ready orders.', complete:'COMPLETE', missing:'PRODUCE MISSING', noOrders:'No active orders.', autoSell:'Auto Sell', autoSellSub:'Queues all fresh produce for sale.', fresh:'Fresh {count}', select:'Select', sellSelected:'SELL SELECTED', noSell:'No produce available for sale.', faucetInfo:'When selected, the verification popup opens automatically when the timer ends.', manualOpen:'OPEN MANUALLY', mod2Sub:'Uses the official field, sale and Homestead engines.', fallback:'Auto 1 fallback', fallbackSub:'Falls back to the API flow when the engine cannot be verified.', language:'Language / Dil', turkish:'Türkçe', english:'English', engineFound:'Engine ready', engineMissing:'Engine missing', logReady:'Bot is ready and waiting.', copied:'Log copied to clipboard.', copyBlocked:'Clipboard access was blocked by the browser.', dataRefreshed:'Farm data refreshed.', popupBlocked:'The popup was blocked by the browser.', captchaWaiting:'Faucet Pay opened; waiting for manual CAPTCHA.', treeHarvest:'{name} harvested.', modeStarted:'Bot started ({mode}).', botStopped:'Bot stopped.', autoOpened:'Faucet Pay is ready; verification popup opened.' }
+    };
+    Object.assign(I18N.tr,{ seedChosen:'Tarla {plot} tohumu seçildi: {seed}.', autoCompleteState:'Auto Tamamla {state}.', autoSellState:'Auto Sell {state}.', mod2State:'Mod 2 {state}.', fallbackState:'Auto 1 yedek {state}.', opened:'açıldı', closedWord:'kapatıldı', dataError:'Veri okunamadı: {error}', plantAttempt:'(Mod 2) Tarla {plot}: {seed} ekiliyor...', plantDone:'Tarla {plot} ekildi: {seed}.', plantFailed:'Ekim yapılamadı: {error}', harvestAttempt:'(Mod 2) Tarla {plot} hasat ediliyor...', harvested:'{name} hasat edildi.', harvestFailed:'Hasat yapılamadı: {error}', orderDone:'Sipariş tamamlandı: {name} · +{coins} Coin', orderFailed:'Sipariş tamamlanamadı: {error}', fallbackLog:'(Mod 2) {error}; Auto 1\'e geçildi.', faucetSelected:'Faucet Pay {state}.', verified:'Güvenlik doğrulaması tamamlandı; resmi claim gönderildi.', claimed:'Faucet Pay başarıyla alındı.', treeAttempt:'(Mod 2) {name} ağacı toplanıyor...', treeFailed:'Ağaç hasadı yapılamadı: {error}', saleAttempt:'(Mod 2) {name} satılıyor...', sold:'{name} satıldı: {quantity}.', saleFailed:'Satış yapılamadı: {error}', enginePageMissing:'Çiftlik motoru bu sayfada bulunamadı.', invalidPlot:'Geçersiz tarla.', fieldActionMissing:'Resmi tarla aksiyonu bulunamadı.', seedDialogMissing:'Resmi tohum menüsü açılmadı.', seedUnavailable:'Seçilen tohum resmi menüde kullanılamıyor.', plantUnverified:'Motor ekimi sunucuda doğrulanmadı.', harvestUnverified:'Motor hasadı sunucuda doğrulanmadı.', saleButtonMissing:'Resmi satış düğmesi bulunamadı.', saleDialogMissing:'Resmi satış penceresi açılmadı.', saleControlsMissing:'Satış kontrolleri bulunamadı.', salePreviewMissing:'Satış önizlemesi hazırlanmadı.', saleUnverified:'Motor satışı sunucuda doğrulanmadı.', treeCardMissing:'Resmi ağaç kartı bulunamadı.', homesteadDialogMissing:'Homestead penceresi açılmadı.', treeActionMissing:'Ağaç hasat aksiyonu hazır değil.', treeUnverified:'Ağaç hasadı sunucuda doğrulanmadı.', checkpointNeeded:'Çiftlik güvenlik kontrolü istendi. Bot doğrulama tamamlanana kadar bekliyor.', checkpointOpened:'Nexus çiftlik doğrulama penceresi açıldı.', checkpointBlocked:'Doğrulama popup\'ı engellendi; sayfadaki güvenlik penceresini tamamla.', checkpointPassed:'Çiftlik güvenlik kontrolü tamamlandı. Bot kaldığı yerden devam ediyor.', checkpointServerWait:'Doğrulama sunucuda henüz kesinleşmedi; sayfa yenilenmeden kontrollü olarak tekrar bakılacak.', checkpointRetry:'hCaptcha onayı gelmedi veya popup yönlendirildi; doğrulama penceresi yeniden açılıyor.', visualChallenge:'Görsel hCaptcha açıldı; manuel çözüm bekleniyor.' });
+    Object.assign(I18N.en,{ seedChosen:'Field {plot} seed selected: {seed}.', autoCompleteState:'Auto Complete {state}.', autoSellState:'Auto Sell {state}.', mod2State:'Mod 2 {state}.', fallbackState:'Auto 1 fallback {state}.', opened:'enabled', closedWord:'disabled', dataError:'Data could not be loaded: {error}', plantAttempt:'(Mod 2) Field {plot}: planting {seed}...', plantDone:'Field {plot} planted: {seed}.', plantFailed:'Planting failed: {error}', harvestAttempt:'(Mod 2) Harvesting field {plot}...', harvested:'{name} harvested.', harvestFailed:'Harvest failed: {error}', orderDone:'Order completed: {name} · +{coins} Coin', orderFailed:'Order failed: {error}', fallbackLog:'(Mod 2) {error}; switched to Auto 1.', faucetSelected:'Faucet Pay {state}.', verified:'Security verification complete; official claim submitted.', claimed:'Faucet Pay claimed successfully.', treeAttempt:'(Mod 2) Harvesting {name} tree...', treeFailed:'Tree harvest failed: {error}', saleAttempt:'(Mod 2) Selling {name}...', sold:'{name} sold: {quantity}.', saleFailed:'Sale failed: {error}', enginePageMissing:'The farm engine is not available on this page.', invalidPlot:'Invalid field.', fieldActionMissing:'Official field action is unavailable.', seedDialogMissing:'Official seed menu did not open.', seedUnavailable:'The selected seed is unavailable in the official menu.', plantUnverified:'Engine planting could not be verified on the server.', harvestUnverified:'Engine harvest could not be verified on the server.', saleButtonMissing:'Official sale button is unavailable.', saleDialogMissing:'Official sale dialog did not open.', saleControlsMissing:'Sale controls are unavailable.', salePreviewMissing:'Sale preview was not prepared.', saleUnverified:'Engine sale could not be verified on the server.', treeCardMissing:'Official tree card is unavailable.', homesteadDialogMissing:'Homestead dialog did not open.', treeActionMissing:'Tree harvest action is not ready.', treeUnverified:'Tree harvest could not be verified on the server.', checkpointNeeded:'Farm security verification is required. The bot is paused until it is completed.', checkpointOpened:'Nexus farm verification window opened.', checkpointBlocked:'The verification popup was blocked; complete the security check on the farm page.', checkpointPassed:'Farm security verification completed. The bot is resuming.', checkpointServerWait:'Verification is not final on the server yet; it will be checked again without reloading the page.', checkpointRetry:'hCaptcha was not approved or the popup was redirected; reopening the verification window.', visualChallenge:'An image hCaptcha opened; waiting for manual completion.' });
+    Object.assign(I18N.tr,{faucetAuto:'AUTO FAUCET',faucetAutoSub:'Süre dolunca Faucet doğrulama penceresini otomatik aç.',enable:'AÇ',disable:'KAPAT'});
+    Object.assign(I18N.en,{faucetAuto:'AUTO FAUCET',faucetAutoSub:'Automatically open the Faucet verification window when ready.',enable:'ENABLE',disable:'DISABLE'});
+    const defaults = {
+        running:false, autoOrders:false, autoSell:false, mod2:false, mod2Fallback:true,
+        faucetArmed:false, lang:'tr', selectedSell:[], plotSeeds:{}, autoPlots:[], uiPos:null, windowPositions:{}
+    };
+    function readSaved(){
+        try { return { ...defaults, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') }; }
+        catch { return { ...defaults }; }
+    }
+    const saved = readSaved();
+    const state = {
+        farm:null, homestead:null, catalog:new Map(), offset:0, busy:false, destroyed:false,
+        running:CAPTCHA_RELOAD_STATE?CAPTCHA_RELOAD_STATE.running:!!saved.running, autoOrders:!!saved.autoOrders, autoSell:!!saved.autoSell,
+        mod2:!!saved.mod2, mod2Fallback:saved.mod2Fallback !== false,
+        faucetArmed:!!saved.faucetArmed, lang:saved.lang==='en'?'en':'tr', selectedSell:new Set(saved.selectedSell || []),
+        plotSeeds:{ ...(saved.plotSeeds || {}) }, autoPlots:new Set(saved.autoPlots || []), uiPos:saved.uiPos || null,
+        windowPositions:{ ...(saved.windowPositions || {}) }, logs:[], seedPlot:0,
+        runtimePlot:null, runtimeKicker:null,
+        faucetPopup:null, faucetReadyKey:'', faucetRetryTimer:null, faucetClaimPending:false, faucetVerifiedAt:0, faucetConfirming:false, faucetClaimLogged:false, checkpointPopup:null, checkpointPending:false, checkpointNotified:false, checkpointConfirming:false, checkpointProbeAt:0, checkpointRetryTimer:null, checkpointRetryCount:0, reloadPending:false, lastLoadAt:0, cycleTimer:null, z:2147483600
+    };
+    const timers = new Set();
+
+    function save(){
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            running:state.running, autoOrders:state.autoOrders, autoSell:state.autoSell,
+            mod2:state.mod2, mod2Fallback:state.mod2Fallback, faucetArmed:state.faucetArmed, lang:state.lang,
+            selectedSell:[...state.selectedSell], plotSeeds:state.plotSeeds, autoPlots:[...state.autoPlots],
+            uiPos:state.uiPos, windowPositions:state.windowPositions
+        }));
+    }
+    const BRIDGE_STATUS_URL = 'http://127.0.0.1:8767/bot-status';
+    function reportBridgeStatus(){
+        GM_xmlhttpRequest({
+            method:'POST', url:BRIDGE_STATUS_URL,
+            headers:{'Content-Type':'application/json'}, timeout:2500,
+            data:JSON.stringify({
+                active:!!state.running,
+                manual_stop:!state.running,
+                mode:state.checkpointPending?'hCaptcha bekleniyor':(state.mod2?'Mod 2':'Auto 1')
+            }),
+            onload:()=>{}, onerror:()=>{}, ontimeout:()=>{}
+        });
+    }
+    function t(key, values={}){
+        let text=I18N[state.lang]?.[key] ?? I18N.tr[key] ?? key;
+        for(const [name,value] of Object.entries(values))text=text.replaceAll(`{${name}}`,String(value));
+        return text;
+    }
+    const UI_PATHS={
+        field:'<path d="M12 21V10M12 14c-4 0-7-2-7-6 4 0 7 2 7 6Zm0-3c4 0 7-2 7-6-4 0-7 2-7 6Z"/>',
+        orders:'<path d="M9 5h6M9 3h6v4H9zM6 5H4v16h16V5h-2M8 11h8M8 15h8"/>',
+        barn:'<path d="m3 10 9-7 9 7v11H3ZM8 21v-7h8v7M7 10h10"/>',
+        earn:'<circle cx="12" cy="12" r="9"/><path d="M9 9.5c0-1.2 1.2-2 3-2s3 .8 3 2-1.2 2-3 2-3 .8-3 2 1.2 2 3 2 3-.8 3-2M12 5v14"/>',
+        faucet:'<path d="M12 3c3 4 6 7.3 6 11a6 6 0 1 1-12 0c0-3.7 3-7 6-11Z"/>',
+        settings:'<circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.7-.7-1.7.9-1.9-2.1-2.1-1.9.9-1.7-.7L10.5 2h-3l-.7 2-1.7.7-1.9-.9-2.1 2.1.9 1.9-.7 1.7-2 .7v3l2 .7.7 1.7-.9 1.9 2.1 2.1 1.9-.9 1.7.7.7 2h3l.7-2 1.7-.7 1.9.9 2.1-2.1-.9-1.9.7-1.7Z" transform="translate(2 0) scale(.83)"/>',
+        play:'<path d="m8 5 11 7-11 7Z"/>',stop:'<rect x="6" y="6" width="12" height="12" rx="1"/>',copy:'<rect x="8" y="8" width="11" height="11" rx="1"/><path d="M16 8V5H5v11h3"/>'
+    };
+    function uiIcon(name,className='nx5-svg'){return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UI_PATHS[name]||UI_PATHS.earn}</svg>`;}
+
+    Object.assign(UI_PATHS,{
+        okc:'<path d="m5 12.5 4.5 4.5L19 7"/>',
+        warnc:'<path d="M12 4 3 20h18Z"/><path d="M12 10v4M12 17h.01"/>',
+        badc:'<path d="m6 6 12 12M18 6 6 18"/>',
+        infoc:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+        trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'
+    });
+    let introPlayed=false;
+    function closePanel(panel){
+        if(!panel||panel.dataset.closing)return;
+        panel.dataset.closing='1';panel.classList.add('nx5-out');
+        setTimeout(()=>{panel.remove();renderMain();},210);
+    }
+
+    const css = `
+        @property --nx5-a{syntax:'<angle>';inherits:false;initial-value:0deg}
+        @keyframes nx5-spin{to{--nx5-a:360deg}}
+        @keyframes nx5-pop{0%{opacity:0;transform:translateY(22px) scale(.9);filter:blur(10px)}60%{filter:blur(0)}100%{opacity:1;transform:none;filter:none}}
+        @keyframes nx5-out{to{opacity:0;transform:translateY(14px) scale(.93);filter:blur(8px)}}
+        @keyframes nx5-aurora{from{transform:translate3d(-4%,-3%,0) rotate(0deg)}to{transform:translate3d(5%,4%,0) rotate(10deg)}}
+        @keyframes nx5-flow{to{background-position:-200% 0}}
+        @keyframes nx5-float{50%{transform:translateY(-3px)}}
+        @keyframes nx5-glow{50%{box-shadow:0 0 36px rgba(52,245,161,.95)}}
+        @keyframes nx5-eq{0%,100%{height:3px}50%{height:11px}}
+        @keyframes nx5-blink{50%{opacity:.3}}
+        @keyframes nx5-ring{0%{box-shadow:0 8px 26px rgba(255,93,122,.4),0 0 0 0 rgba(255,93,122,.6)}100%{box-shadow:0 8px 26px rgba(255,93,122,.4),0 0 0 16px rgba(255,93,122,0)}}
+        @keyframes nx5-in{from{opacity:0;transform:translateX(-22px) scale(.97)}to{opacity:1;transform:none}}
+        @keyframes nx5-rise{from{opacity:0;transform:translateY(20px) scale(.93)}to{opacity:1;transform:none}}
+        @keyframes nx5-flash{from{background:rgba(52,245,161,.30)}}
+        @keyframes nx5-gb{50%{box-shadow:0 0 38px rgba(77,225,255,.5)}}
+
+        #${ROOT_ID},[id^="${WINDOW_PREFIX}"],#${LAUNCHER_ID}{--nx-g:#34f5a1;--nx-y:#ffd86b;--nx-c:#4de1ff;--nx-v:#b48cff;--nx-r:#ff5d7a;--nx-ink:#eafff5;--nx-mut:#8fb3a6;--nx-glass:rgba(255,255,255,.05);--nx-line:rgba(160,255,220,.17)}
+        #nx5-window-farm{--ac:#34f5a1}#nx5-window-orders{--ac:#ffd86b}#nx5-window-barn{--ac:#ff8f6b}#nx5-window-earn{--ac:#4de1ff}#nx5-window-settings{--ac:#b48cff}
+        #${ROOT_ID},[id^="${WINDOW_PREFIX}"]{position:fixed;z-index:2147483600;color:var(--nx-ink);font:13px/1.4 "Segoe UI Variable Text","Segoe UI",system-ui,Arial,sans-serif;border:1.5px solid transparent;border-radius:20px;overflow:hidden;background:linear-gradient(165deg,#06130e 0%,#0a1c22 55%,#150f28 100%) padding-box,conic-gradient(from var(--nx5-a),#34f5a1,#4de1ff,#b48cff,#ff7a90,#ffd86b,#34f5a1) border-box;box-shadow:0 30px 90px rgba(0,0,0,.66),0 0 48px rgba(52,245,161,.13);animation:nx5-pop .6s cubic-bezier(.2,.9,.25,1.12) both,nx5-spin 8s linear infinite}
+        #${ROOT_ID}::before,[id^="${WINDOW_PREFIX}"]::before{content:'';position:absolute;inset:-30%;z-index:0;pointer-events:none;background:radial-gradient(38% 32% at 16% 18%,rgba(52,245,161,.22),transparent 70%),radial-gradient(34% 30% at 86% 10%,rgba(180,140,255,.24),transparent 70%),radial-gradient(40% 34% at 72% 92%,rgba(77,225,255,.17),transparent 70%),radial-gradient(28% 24% at 8% 85%,rgba(255,216,107,.12),transparent 70%);animation:nx5-aurora 14s ease-in-out infinite alternate}
+        #${ROOT_ID}>*,[id^="${WINDOW_PREFIX}"]>*{position:relative;z-index:1}
+        #${ROOT_ID}[hidden],#${LAUNCHER_ID}[hidden],[id^="${WINDOW_PREFIX}"][hidden]{display:none!important}
+        #${ROOT_ID} *,[id^="${WINDOW_PREFIX}"] *{box-sizing:border-box;letter-spacing:0}
+        #${ROOT_ID}{right:18px;top:18px;width:420px;max-width:calc(100vw - 24px);display:flex;flex-direction:column;max-height:calc(100vh - 36px)}
+        .nx5-window{width:520px;max-width:calc(100vw - 24px);max-height:calc(100vh - 32px);display:flex;flex-direction:column}
+        [id^="${WINDOW_PREFIX}"].nx5-out{animation:nx5-out .21s ease forwards!important;pointer-events:none}
+
+        .nx5-head{height:66px;flex:0 0 66px;padding:10px 12px 10px 14px;background:linear-gradient(90deg,rgba(52,245,161,.17),rgba(77,225,255,.10) 55%,rgba(180,140,255,.16));border-bottom:1px solid var(--nx-line);display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:grab;user-select:none}
+        .nx5-head:active{cursor:grabbing}
+        .nx5-brand{display:flex;align-items:center;gap:11px;min-width:0}
+        .nx5-mark{width:42px;height:42px;flex:0 0 42px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,var(--ac,#ffd86b),color-mix(in srgb,var(--ac,#ffd86b) 35%,#fff));color:#052015;font-size:21px;font-weight:900;box-shadow:0 0 22px color-mix(in srgb,var(--ac,#34f5a1) 55%,transparent);animation:nx5-float 3.4s ease-in-out infinite}
+        .nx5-on .nx5-mark{animation:nx5-float 3.4s ease-in-out infinite,nx5-glow 1.6s ease-in-out infinite}
+        .nx5-title{display:flex;align-items:center;gap:7px;font-weight:800;font-size:16px;white-space:nowrap}
+        .nx5-tt{background:linear-gradient(90deg,#fff,#a8ffd8,#8fe9ff,#d2b8ff,#fff);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;animation:nx5-flow 6s linear infinite}
+        .nx5-version{padding:3px 8px;border-radius:999px;background:linear-gradient(90deg,#34f5a1,#4de1ff);color:#04241a;font-size:9px;font-weight:900}
+        .nx5-sub{margin-top:3px;display:flex;align-items:center;color:var(--nx-mut);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .nx5-live{display:inline-flex;align-items:flex-end;gap:2px;height:11px;margin-right:7px;flex:0 0 auto}
+        .nx5-live b{width:3px;height:3px;border-radius:2px;background:#4a6b5e;transition:background .3s}
+        .nx5-on .nx5-live b{background:var(--nx-g);box-shadow:0 0 7px var(--nx-g);animation:nx5-eq .9s ease-in-out infinite}
+        .nx5-on .nx5-live b:nth-child(2){animation-delay:.18s}.nx5-on .nx5-live b:nth-child(3){animation-delay:.36s}
+        .nx5-head-actions{display:flex;align-items:center;gap:7px}
+        .nx5-icon{width:35px;height:35px;padding:0;border:1px solid var(--nx-line);border-radius:12px;background:rgba(255,255,255,.07);color:#fff;display:grid;place-items:center;cursor:pointer;font:800 15px "Segoe UI",Arial,sans-serif;transition:transform .2s,background .2s,border-color .2s}
+        .nx5-icon:hover{border-color:var(--nx-y);background:rgba(255,216,107,.16);transform:translateY(-2px)}
+        .nx5-icon .nx5-inline-icon{transition:transform .5s cubic-bezier(.3,1.4,.5,1)}.nx5-icon:hover .nx5-inline-icon{transform:rotate(90deg)}
+        .nx5-close:hover{background:rgba(255,93,122,.28);border-color:var(--nx-r)}
+        .nx5-svg{width:26px;height:26px;display:block}.nx5-inline-icon{width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-right:6px}.nx5-icon .nx5-inline-icon,.nx5-copy .nx5-inline-icon{margin:0;vertical-align:middle}.nx5-title-svg{width:23px;height:23px;display:block}.nx5-lg-svg{width:14px;height:14px;display:block}
+
+        .nx5-main,.nx5-window-body{min-height:0;overflow:auto;padding:14px;scrollbar-width:thin;scrollbar-color:#4de1ff #0b1d1a}
+        .nx5-main::-webkit-scrollbar,.nx5-window-body::-webkit-scrollbar,.nx5-log::-webkit-scrollbar{width:8px;height:8px}
+        .nx5-main::-webkit-scrollbar-track,.nx5-window-body::-webkit-scrollbar-track,.nx5-log::-webkit-scrollbar-track{background:transparent}
+        .nx5-main::-webkit-scrollbar-thumb,.nx5-window-body::-webkit-scrollbar-thumb,.nx5-log::-webkit-scrollbar-thumb{background:linear-gradient(#34f5a1,#4de1ff);border-radius:8px}
+
+        .nx5-intro>*{animation:nx5-rise .6s cubic-bezier(.2,.9,.3,1.12) both}
+        .nx5-intro>*:nth-child(2){animation-delay:.08s}.nx5-intro>*:nth-child(3){animation-delay:.16s}.nx5-intro>*:nth-child(4){animation-delay:.24s}.nx5-intro>*:nth-child(5){animation-delay:.32s}.nx5-intro>*:nth-child(n+6){animation-delay:.4s}
+        .nx5-intro .nx5-dashboard>*,.nx5-intro .nx5-grid>*,.nx5-intro .nx5-order-list>*{animation:nx5-rise .65s cubic-bezier(.2,.9,.3,1.12) both}
+        .nx5-intro .nx5-dashboard>*:nth-child(1),.nx5-intro .nx5-grid>*:nth-child(1),.nx5-intro .nx5-order-list>*:nth-child(1){animation-delay:.14s}
+        .nx5-intro .nx5-dashboard>*:nth-child(2),.nx5-intro .nx5-grid>*:nth-child(2),.nx5-intro .nx5-order-list>*:nth-child(2){animation-delay:.22s}
+        .nx5-intro .nx5-dashboard>*:nth-child(3),.nx5-intro .nx5-grid>*:nth-child(3),.nx5-intro .nx5-order-list>*:nth-child(3){animation-delay:.3s}
+        .nx5-intro .nx5-dashboard>*:nth-child(4),.nx5-intro .nx5-grid>*:nth-child(4),.nx5-intro .nx5-order-list>*:nth-child(4){animation-delay:.38s}
+        .nx5-intro .nx5-grid>*:nth-child(n+5),.nx5-intro .nx5-order-list>*:nth-child(n+5){animation-delay:.46s}
+
+        .nx5-dashboard{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}
+        .nx5-menu-card{--ac:#34f5a1;position:relative;min-height:122px;border:1px solid color-mix(in srgb,var(--ac) 38%,transparent);border-radius:18px;background:linear-gradient(155deg,color-mix(in srgb,var(--ac) 20%,#07130f),rgba(7,19,15,.55));color:#fff;padding:15px;text-align:left;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;font:inherit;transition:transform .3s cubic-bezier(.2,.9,.3,1.4),box-shadow .3s,border-color .3s}
+        .nx5-menu-card::after{content:'';position:absolute;top:-10%;left:-70%;width:40%;height:120%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.2),transparent);transform:skewX(-20deg);transition:left .8s ease;pointer-events:none}
+        .nx5-menu-card:hover::after{left:140%}
+        .nx5-menu-card:hover,.nx5-menu-card.open{transform:translateY(-4px);border-color:var(--ac);box-shadow:0 14px 34px color-mix(in srgb,var(--ac) 32%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--ac) 45%,transparent)}
+        .nx5-menu-card:active{transform:scale(.96)}
+        .nx5-menu-card.open::before{content:'';position:absolute;right:13px;top:13px;width:9px;height:9px;border-radius:50%;background:var(--ac);box-shadow:0 0 12px var(--ac);animation:nx5-blink 1.4s infinite}
+        .nx5-menu-icon{width:38px;height:38px;display:grid;place-items:center;color:var(--ac);filter:drop-shadow(0 0 9px var(--ac));transition:transform .4s cubic-bezier(.3,1.5,.5,1)}
+        .nx5-menu-card:hover .nx5-menu-icon{transform:scale(1.18) rotate(-8deg)}
+        .nx5-menu-icon .nx5-svg{width:30px;height:30px}
+        .nx5-menu-card strong{font-size:15px;font-weight:800}
+        .nx5-menu-card small{color:#b4cfc4;line-height:1.4}
+        .nx5-menu-card.faucet-on{--ac:#4de1ff;animation:nx5-gb 2.4s ease-in-out infinite}
+
+        .nx5-card{padding:13px;background:var(--nx-glass);border:1px solid var(--nx-line);border-radius:16px;margin-bottom:10px;transition:border-color .25s,transform .25s}
+        .nx5-grid .nx5-card:hover,.nx5-order-card:hover{border-color:rgba(160,255,220,.4);transform:translateY(-2px)}
+        .nx5-row{display:flex;align-items:center;justify-content:space-between;gap:9px}
+        .nx5-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+        .nx5-muted{color:var(--nx-mut);font-size:11px;line-height:1.45}
+        .nx5-value{color:var(--nx-y);font-weight:900}
+        .nx5-time{display:block;color:var(--nx-c);font-size:17px;font-weight:800;margin:5px 0;font-variant-numeric:tabular-nums;text-shadow:0 0 14px rgba(77,225,255,.55)}
+        .nx5-pill{padding:5px 10px;border-radius:999px;background:linear-gradient(90deg,rgba(180,140,255,.28),rgba(77,225,255,.22));color:#e7dcff;border:1px solid rgba(180,140,255,.5);font-size:10px;font-weight:900;white-space:nowrap}
+        .nx5-overview{display:flex;align-items:center;justify-content:space-between;gap:10px;background:linear-gradient(120deg,rgba(52,245,161,.12),rgba(180,140,255,.10))}
+        .nx5-overview-copy{min-width:0;flex:1}.nx5-overview-copy strong{font-size:14px}
+        .nx5-overview-stats{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap}
+        .nx5-stat{display:flex;align-items:center;gap:5px;max-width:96px;padding:5px 9px;border:1px solid rgba(255,216,107,.4);border-radius:999px;background:rgba(255,216,107,.09);color:var(--nx-y);font-size:11px;font-weight:900;white-space:nowrap;overflow:hidden}
+        .nx5-stat b{overflow:hidden;text-overflow:ellipsis}.nx5-stat img{width:16px;height:16px;object-fit:contain;filter:drop-shadow(0 0 5px rgba(255,216,107,.8))}
+
+        .nx5-btn,.nx5-item{border:1px solid rgba(160,255,220,.28);background:rgba(255,255,255,.06);color:#f2fff9;border-radius:13px;padding:10px 12px;cursor:pointer;font:inherit;font-weight:700;transition:transform .2s,background .2s,border-color .2s,box-shadow .2s}
+        .nx5-btn:hover,.nx5-item:hover{background:rgba(52,245,161,.15);border-color:var(--nx-g);transform:translateY(-1px)}
+        .nx5-btn:active,.nx5-item:active{transform:scale(.97)}
+        .nx5-btn.active{background:linear-gradient(135deg,#ffd86b,#ffb347);border-color:#fff1b8;color:#2a1d00;box-shadow:0 0 20px rgba(255,216,107,.45)}
+        .nx5-btn.danger{background:linear-gradient(135deg,#ff5d7a,#c2294b);border-color:#ff9db0;color:#fff}
+        .nx5-btn.wide{width:100%;padding:12px}.nx5-btn.secondary{background:rgba(255,255,255,.04)}
+        .nx5-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+        .nx5-btn.nx5-start,.nx5-btn.nx5-start:hover{position:relative;overflow:hidden;border:0;font-size:14px;font-weight:800;color:#04170f;background:linear-gradient(110deg,#34f5a1,#4de1ff,#b48cff,#34f5a1);background-size:200% 100%;animation:nx5-flow 5s linear infinite;box-shadow:0 8px 28px rgba(52,245,161,.35)}
+        .nx5-btn.nx5-start:hover{filter:brightness(1.12);transform:translateY(-2px)}
+        .nx5-btn.nx5-start.danger,.nx5-btn.nx5-start.danger:hover{color:#fff;background:linear-gradient(110deg,#ff5d7a,#ff9a5d,#ff5d7a);background-size:200% 100%;animation:nx5-flow 3s linear infinite,nx5-ring 1.8s ease-out infinite}
+        .nx5-actions{display:flex;gap:7px;flex-wrap:wrap}.nx5-actions>.nx5-btn{flex:1;min-width:120px}
+        .nx5-item{width:100%;text-align:left;margin-top:8px;display:flex;align-items:center;gap:10px}
+        .nx5-item.on{background:linear-gradient(90deg,rgba(52,245,161,.24),rgba(77,225,255,.10));border-color:var(--nx-g);box-shadow:inset 3px 0 0 var(--nx-g),0 0 18px rgba(52,245,161,.15)}
+        .nx5-item-copy{min-width:0;flex:1}.nx5-item-copy strong,.nx5-item-copy span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .nx5-seed{width:40px;height:40px;object-fit:contain;flex:0 0 40px;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
+        .nx5-seed-fallback{display:grid!important;place-items:center;width:40px;height:40px;flex:0 0 40px;border-radius:11px;background:rgba(255,216,107,.15);color:var(--nx-y);font-weight:900}
+
+        .nx5-status{padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:#b8d3c8;font-size:10px;font-weight:800;white-space:nowrap}
+        .nx5-status.ok{color:#7dffbd;border-color:rgba(125,255,189,.5);background:rgba(52,245,161,.12);animation:nx5-blink 1.8s ease-in-out infinite}
+        .nx5-status.warn{color:#ffe08a;border-color:rgba(255,216,107,.45);background:rgba(255,216,107,.08)}
+        .nx5-status.bad{color:#ff9fb0;border-color:rgba(255,93,122,.5);background:rgba(255,93,122,.1)}
+
+        .nx5-log-wrap{border-top:1px solid var(--nx-line);background:rgba(2,10,8,.58)}
+        .nx5-log-tools{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(160,255,220,.1)}
+        .nx5-log-title{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800;color:#d9fff0}
+        .nx5-log-title i{width:7px;height:7px;border-radius:50%;background:var(--nx-g);box-shadow:0 0 9px var(--nx-g);animation:nx5-blink 1.6s infinite}
+        .nx5-log-actions{display:flex;align-items:center;gap:6px}
+        .nx5-counts{display:flex;gap:4px}.nx5-count{min-width:22px;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;text-align:center;border:1px solid}
+        .nx5-count.ok{color:#7dffbd;border-color:rgba(125,255,189,.4);background:rgba(125,255,189,.08)}
+        .nx5-count.warn{color:#ffe08a;border-color:rgba(255,216,107,.4);background:rgba(255,216,107,.08)}
+        .nx5-count.bad{color:#ff9fb0;border-color:rgba(255,93,122,.4);background:rgba(255,93,122,.08)}
+        .nx5-copy{border:0;background:transparent;color:var(--nx-mut);cursor:pointer;padding:3px;border-radius:7px;font-size:13px;transition:color .2s,background .2s,transform .2s}
+        .nx5-copy:hover{color:var(--nx-y);background:rgba(255,255,255,.08);transform:scale(1.15)}
+        .nx5-log{max-height:158px;overflow:auto;padding:7px 8px;scrollbar-width:thin;scrollbar-color:#4de1ff #0b1d1a}
+        .nx5-log-row{--lc:#4de1ff;display:grid;grid-template-columns:24px 56px minmax(0,1fr) 24px;gap:8px;align-items:center;padding:6px 8px;margin-bottom:4px;border-radius:11px;background:rgba(255,255,255,.04);border-left:3px solid var(--lc);color:#d3e8de;font-size:11px;transition:background .2s}
+        .nx5-log-row.ok{--lc:#34f5a1}.nx5-log-row.warn{--lc:#ffd86b}.nx5-log-row.bad{--lc:#ff5d7a}.nx5-log-row.info{--lc:#4de1ff}
+        .nx5-log-row:hover{background:rgba(255,255,255,.08)}
+        .nx5-log-row.fresh{animation:nx5-in .5s cubic-bezier(.2,.9,.3,1.2) both,nx5-flash 1.2s ease-out}
+        .nx5-lg-ic{width:22px;height:22px;border-radius:8px;display:grid;place-items:center;color:var(--lc);background:color-mix(in srgb,var(--lc) 17%,transparent)}
+        .nx5-log-time{color:#7da396;font-size:10px;font-variant-numeric:tabular-nums}
+        .nx5-log-msg{overflow-wrap:anywhere;line-height:1.35}
+        .nx5-empty{text-align:center;padding:22px;color:#91aa98}
+
+        .nx5-order-list{display:grid;gap:10px}.nx5-order-card{margin:0}.nx5-order-req{margin-top:9px}
+        .nx5-order-req-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;color:#c6dcd1;font-size:11px}
+        .nx5-progress{height:8px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid rgba(160,255,220,.18);overflow:hidden}
+        .nx5-progress>span{display:block;height:100%;background:linear-gradient(90deg,#34f5a1,#ffd86b,#34f5a1);background-size:200% 100%;border-radius:inherit;box-shadow:0 0 12px rgba(52,245,161,.6);animation:nx5-flow 3s linear infinite;transition:width .7s cubic-bezier(.2,.9,.3,1)}
+
+        .nx5-switch{position:relative;width:48px;height:26px;flex:0 0 48px}.nx5-switch input{position:absolute;opacity:0}
+        .nx5-switch span{position:absolute;inset:0;border-radius:999px;background:rgba(255,93,122,.3);border:1px solid rgba(255,122,144,.6);cursor:pointer;transition:background .3s,box-shadow .3s,border-color .3s}
+        .nx5-switch span:after{content:'';position:absolute;width:20px;height:20px;left:2px;top:2px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4);transition:transform .4s cubic-bezier(.3,1.6,.5,1)}
+        .nx5-switch input:checked+span{background:linear-gradient(90deg,#1fbf7b,#4de1ff);border-color:#8bffd0;box-shadow:0 0 16px rgba(52,245,161,.55)}
+        .nx5-switch input:checked+span:after{transform:translateX(22px)}
+        .nx5-setting{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid rgba(160,255,220,.12)}.nx5-setting:last-child{border-bottom:0}
+        .nx5-card.nx5-setting{padding:13px}
+        .nx5-faucet{grid-column:1/-1;min-height:108px;cursor:default}.nx5-faucet:hover{transform:none}.nx5-faucet:hover::after{left:-70%}
+        .nx5-faucet-line{display:flex;align-items:center;justify-content:space-between;gap:12px}.nx5-faucet-copy{min-width:0;flex:1}
+        .nx5-faucet-toggle{margin:11px 0 4px;padding:11px 0;border-top:1px solid rgba(160,255,220,.18)}
+        .nx5-faucet small{color:var(--nx-mut)}
+        .nx5-manual{margin-top:10px;width:100%}
+        .nx5-led{display:inline-block;width:9px;height:9px;margin-left:7px;border-radius:50%;background:#ff5d7a;box-shadow:0 0 9px #ff5d7a}.nx5-led.on{background:#34f5a1;box-shadow:0 0 10px #34f5a1;animation:nx5-blink 1.6s infinite}
+        .nx5-select{width:150px;max-width:46%;padding:9px;border:1px solid var(--nx-line);border-radius:11px;background:rgba(255,255,255,.07);color:#fff;font:inherit}
+        .nx5-select option{background:#0a1c22;color:#fff}
+
+        #${LAUNCHER_ID}{position:fixed;z-index:2147483647;right:18px;bottom:18px;width:56px;height:56px;border-radius:50%;border:0;isolation:isolate;background:conic-gradient(from var(--nx5-a),#34f5a1,#4de1ff,#b48cff,#ff7a90,#ffd86b,#34f5a1);color:#ffd86b;font:900 22px "Segoe UI",Arial,sans-serif;cursor:pointer;box-shadow:0 0 28px rgba(52,245,161,.5);animation:nx5-spin 4s linear infinite,nx5-float 3s ease-in-out infinite;transition:filter .2s}
+        #${LAUNCHER_ID}::before{content:'';position:absolute;inset:3px;border-radius:50%;background:#07130f;z-index:-1}
+        #${LAUNCHER_ID}:hover{filter:brightness(1.25)}
+
+        @media(max-width:620px){#${ROOT_ID}{right:8px;top:8px;width:calc(100vw - 16px);max-height:calc(100vh - 16px)}.nx5-window{left:8px!important;top:76px!important;width:calc(100vw - 16px);max-height:calc(100vh - 84px)}.nx5-grid{grid-template-columns:1fr}}
+        @media(prefers-reduced-motion:reduce){#${ROOT_ID},#${ROOT_ID} *,[id^="${WINDOW_PREFIX}"],[id^="${WINDOW_PREFIX}"] *,#${LAUNCHER_ID}{animation:none!important;transition:none!important}}
+    `;
+
+    function placeCaptchaAnchor(frame){
+        let anchor=document.getElementById('nexus-captcha-anchor');
+        if(!anchor){anchor=document.createElement('i');anchor.id='nexus-captcha-anchor';document.body.append(anchor);}
+        const rect=frame.getBoundingClientRect();
+        anchor.style.cssText=`position:fixed;z-index:2147483647;pointer-events:none;width:6px;height:6px;border-radius:50%;background:#ff00d4;box-shadow:0 0 4px #ff00d4;left:${Math.round(rect.left+30)}px;top:${Math.round(rect.top+rect.height/2-3)}px`;
+    }
+    function clearCaptchaAnchor(){document.getElementById('nexus-captcha-anchor')?.remove();}
+
+    let captchaAlarmContext=null;
+    let captchaAlarmPlaying=false;
+    function primeCaptchaAlarm(){
+        try{
+            const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+            if(!AudioContextClass)return;
+            if(!captchaAlarmContext)captchaAlarmContext=new AudioContextClass();
+            if(captchaAlarmContext.state==='suspended')captchaAlarmContext.resume().catch(()=>{});
+        }catch{}
+    }
+    function playCaptchaAlarm(){
+        if(captchaAlarmPlaying)return;
+        primeCaptchaAlarm();
+        const context=captchaAlarmContext;
+        if(!context)return;
+        const start=()=>{
+            if(captchaAlarmPlaying)return;
+            captchaAlarmPlaying=true;
+            const base=context.currentTime+.04;
+            for(let index=0;index<3;index++){
+                const oscillator=context.createOscillator();
+                const gain=context.createGain();
+                const at=base+(index*.48);
+                oscillator.type='square';
+                oscillator.frequency.setValueAtTime(index===1?1120:920,at);
+                gain.gain.setValueAtTime(.0001,at);
+                gain.gain.exponentialRampToValueAtTime(.38,at+.025);
+                gain.gain.exponentialRampToValueAtTime(.0001,at+.3);
+                oscillator.connect(gain);gain.connect(context.destination);
+                oscillator.start(at);oscillator.stop(at+.32);
+            }
+            setTimeout(()=>{captchaAlarmPlaying=false;},1750);
+        };
+        if(context.state==='running')start();
+        else context.resume().then(start).catch(()=>{});
+    }
+    // START ve panel tiklamalari ana sekmedeki ses motorunu Chrome engeline
+    // takilmadan hazirlar. Alarm popup yerine bu ana sekmeden calar.
+    document.addEventListener('pointerdown',primeCaptchaAlarm,{capture:true});
+    document.addEventListener('keydown',primeCaptchaAlarm,{capture:true});
+
+    function nexusClient(){
+        return window.__MINERBYTSFREE_CLIENT__||globalThis.__MINERBYTSFREE_CLIENT__||{};
+    }
+    function loadTelegramSettings(){
+        const candidates=[];
+        try{candidates.push(GM_getValue(TELEGRAM_SETTINGS_KEY));}catch{}
+        for(const raw of candidates){try{const value=typeof raw==='string'?JSON.parse(raw):raw;if(value&&typeof value==='object')return value;}catch{}}
+        return {enabled:false,botToken:'',chatId:''};
+    }
+    function saveTelegramSettings(value){
+        const clean={enabled:!!value.enabled,botToken:String(value.botToken||'').trim(),chatId:String(value.chatId||'').trim()};
+        try{GM_setValue(TELEGRAM_SETTINGS_KEY,JSON.stringify(clean));}catch{}
+        return clean;
+    }
+    function telegramServerRequest(method,path,payload={}){
+        const client=nexusClient();
+        const base=String(client.serverUrl||'').replace(/\/$/,'');
+        if(!base||!client.sessionToken)return Promise.resolve({success:false,error:'Nexus lisans oturumu hazir degil'});
+        const auth={token:client.sessionToken,client_id:client.clientId||'',script_id:client.scriptId||'',account_id:client.accountId||''};
+        return new Promise(resolve=>{
+            GM_xmlhttpRequest({method,url:base+'/cryptocrops'+path,headers:{'Content-Type':'application/json'},data:JSON.stringify({...auth,...payload}),timeout:25000,
+                onload:response=>{try{const parsed=JSON.parse(response.responseText||'{}');resolve(response.status>=200&&response.status<300?parsed:{success:false,error:parsed.detail||parsed.error||('HTTP '+response.status)});}catch{resolve({success:false,error:'Sunucu yaniti okunamadi'});}},
+                onerror:()=>resolve({success:false,error:'Sunucu baglanti hatasi'}),ontimeout:()=>resolve({success:false,error:'Sunucu zaman asimi'})});
+        });
+    }
+    function telegramStatusRequest(captchaId){
+        const client=nexusClient();const base=String(client.serverUrl||'').replace(/\/$/,'');
+        const query=new URLSearchParams({token:String(client.sessionToken||''),captcha_id:String(captchaId||''),client_id:String(client.clientId||''),script_id:String(client.scriptId||''),account_id:String(client.accountId||'')});
+        return new Promise(resolve=>{GM_xmlhttpRequest({method:'GET',url:base+'/cryptocrops/api/telegram/captcha/status?'+query,timeout:20000,onload:r=>{try{resolve(JSON.parse(r.responseText||'{}'));}catch{resolve({success:false});}},onerror:()=>resolve({success:false}),ontimeout:()=>resolve({success:false})});});
+    }
+    const telegramCaptchaPollers=new Map();
+    async function sendCaptchaToPrivateTelegram(kind,siteKey,popupWindow){
+        const settings=loadTelegramSettings();
+        if(!settings.enabled||!settings.botToken||!settings.chatId||!siteKey)return;
+        const created=await telegramServerRequest('POST','/api/telegram/captcha/create',{kind,site_key:siteKey,page_url:location.href});
+        if(!created?.success||!created.captcha_id){log('Telegram CAPTCHA gonderilemedi: '+(created?.error||'bilinmeyen hata'),'bad');return;}
+        log('CAPTCHA ozel Telegram sohbetine gonderildi.','info');
+        const captchaId=created.captcha_id;let attempts=0;
+        const poll=async()=>{
+            if(state.destroyed||attempts++>300){telegramCaptchaPollers.delete(captchaId);return;}
+            const result=await telegramStatusRequest(captchaId);
+            if(result?.success&&result.solved&&result.captcha_token){
+                telegramCaptchaPollers.delete(captchaId);
+                try{popupWindow?.postMessage({source:'nexus-telegram-captcha',type:'token',kind,captcha_token:result.captcha_token},location.origin);}catch{}
+                log('Telegram CAPTCHA cozumu popup penceresine aktarildi.','ok');
+                return;
+            }
+            const timer=setTimeout(poll,Math.max(1200,Number(created.poll_ms||1800)));
+            telegramCaptchaPollers.set(captchaId,timer);
+        };
+        poll();
+    }
+    function installTelegramSettings(){
+        if(document.getElementById('nx5-telegram-settings-button'))return;
+        const style=document.createElement('style');style.id='nx5-telegram-settings-style';style.textContent=`#nx5-telegram-settings-button{position:fixed;right:78px;bottom:18px;z-index:2147483647;width:50px;height:50px;border-radius:50%;border:1px solid #62c881;background:linear-gradient(145deg,#183d29,#0b2116);color:#8cf0aa;font-size:22px;cursor:pointer;box-shadow:0 10px 30px #0009,0 0 18px #36d66b44}#nx5-telegram-settings-button:hover{filter:brightness(1.2);transform:translateY(-2px)}#nx5-tg-overlay{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#020905cc;backdrop-filter:blur(9px)}#nx5-tg-card{width:min(430px,calc(100vw - 30px));padding:24px;border:1px solid #4c8a60;border-radius:20px;background:#0d2618;color:#edf8ef;box-shadow:0 25px 90px #000c;font-family:Segoe UI,Arial}#nx5-tg-card h3{margin:0 0 5px;color:#79e69c}#nx5-tg-card p{margin:0 0 16px;color:#9eb9a6;font-size:12px;line-height:1.45}#nx5-tg-card label{display:block;margin:11px 0 5px;color:#cfe8d5;font-size:12px;font-weight:700}#nx5-tg-card input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #416d4e;border-radius:10px;background:#06150d;color:#fff;outline:none}#nx5-tg-card .tg-row{display:flex;gap:8px;margin-top:16px}#nx5-tg-card button{flex:1;padding:11px;border:0;border-radius:10px;font-weight:800;cursor:pointer;background:#4fc878;color:#05200e}#nx5-tg-card button.secondary{background:#294535;color:#dcebe0}#nx5-tg-card button.danger{background:#77383a;color:#fff}#nx5-tg-status{min-height:18px;margin-top:12px;text-align:center;color:#a9c8b0;font-size:12px}`;document.head.append(style);
+        const button=document.createElement('button');button.id='nx5-telegram-settings-button';button.textContent='⚙';button.title='Telegram CAPTCHA Ayarlari';document.body.append(button);
+        button.onclick=()=>{
+            document.getElementById('nx5-tg-overlay')?.remove();const saved=loadTelegramSettings();const overlay=document.createElement('div');overlay.id='nx5-tg-overlay';overlay.innerHTML=`<div id="nx5-tg-card"><h3>Telegram CAPTCHA</h3><p>Yalnizca kendi botun ve ozel sohbet Chat ID'n kabul edilir. Grup ve kanal sunucu tarafinda reddedilir.</p><label>Telegram Bot Token</label><input id="nx5-tg-token" type="password" autocomplete="off"><label>Ozel Chat ID</label><input id="nx5-tg-chat" inputmode="numeric" autocomplete="off"><div class="tg-row"><button id="nx5-tg-save">BAGLA</button><button id="nx5-tg-disable" class="danger">KAPAT</button><button id="nx5-tg-close" class="secondary">VAZGEC</button></div><div id="nx5-tg-status"></div></div>`;document.body.append(overlay);
+            overlay.querySelector('#nx5-tg-token').value=saved.botToken||'';overlay.querySelector('#nx5-tg-chat').value=saved.chatId||'';
+            const status=(text,bad=false)=>{const node=overlay.querySelector('#nx5-tg-status');node.textContent=text;node.style.color=bad?'#ff9b9b':'#9df0b5';};
+            overlay.querySelector('#nx5-tg-close').onclick=()=>overlay.remove();overlay.onclick=e=>{if(e.target===overlay)overlay.remove();};
+            overlay.querySelector('#nx5-tg-save').onclick=async()=>{const botToken=overlay.querySelector('#nx5-tg-token').value.trim(),chatId=overlay.querySelector('#nx5-tg-chat').value.trim();if(!botToken||!chatId){status('Bot token ve Chat ID gerekli.',true);return;}status('Ozel sohbet dogrulaniyor...');const result=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:botToken,telegram_chat_id:chatId});if(!result?.success){status(result?.error||'Telegram baglanamadi.',true);return;}saveTelegramSettings({enabled:true,botToken,chatId});status('Baglandi. CAPTCHA yalnizca bu ozel sohbete gidecek.');};
+            overlay.querySelector('#nx5-tg-disable').onclick=async()=>{const result=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:'',telegram_chat_id:''});if(!result?.success){status(result?.error||'Kapatilamadi.',true);return;}saveTelegramSettings({enabled:false,botToken:'',chatId:''});status('Telegram CAPTCHA kapatildi.');};
+        };
+    }
+
+    function runFaucetBridge(){
+        let clicked=false,focused=false,alarmNotified=false,challengeNotified=false,captchaMissingNotified=false;
+        const approvalDeadline=Date.now()+10000;
+        const captchaDetectDeadline=Date.now()+12000;
+        const send = (type, message, extra={}) => window.opener?.postMessage({ source:'nexus-faucet', type, message, ...extra }, location.origin);
+        document.title='Nexus Faucet Pay';
+        const style=document.createElement('style');
+        style.textContent=`html,body{width:100%!important;min-width:0!important;height:100%!important;margin:0!important;background:#0c2119!important;overflow:hidden!important}.topbar,.sidebar,.page-header,.page-title,.page-description,.page-main>aside,.page-main>.ad-slot,.earn-back-link,.demo-warning,.activity-card:not(.faucet-page-card),body>button{display:none!important}.app-shell,.page-main{display:block!important;width:100%!important;height:100%!important;margin:0!important;padding:0!important;max-width:none!important}#page-content,.page-content{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;margin:0!important;padding:16px!important;display:grid!important;place-items:center!important}#page-content>*:not(.faucet-page-card),.page-content>*:not(.faucet-page-card){display:none!important}.faucet-page-card{width:min(420px,calc(100vw - 32px))!important;margin:0!important;padding:22px!important;max-width:none!important;box-shadow:0 22px 70px rgba(0,0,0,.48)!important;border-radius:16px!important;display:grid!important;place-items:stretch!important}.faucet-page-card>:not(.faucet-verification):not([data-claim-faucet]):not(#nexus-hcaptcha-status){display:none!important}.faucet-verification{display:grid!important;place-items:center!important;margin:0!important;padding:0!important;min-height:112px!important}.faucet-verification>:not(.faucet-turnstile){display:none!important}.faucet-turnstile{display:grid!important;place-items:center!important;width:100%!important;margin:0!important}.h-captcha,[data-hcaptcha-widget-id],iframe[src*="hcaptcha.com"],iframe[title*="hCaptcha"]{display:block!important;margin:0 auto!important;visibility:visible!important;opacity:1!important}.faucet-page-card [data-claim-faucet]{display:block!important;width:100%!important;margin-top:14px!important}#nexus-hcaptcha-status{margin:12px 0 0!important;text-align:center;font:12px Arial,sans-serif;color:#a8bdad}`;
+        document.head.appendChild(style);
+        send('opened', 'Faucet Pay doğrulama penceresi açıldı.');
+        if(!window.opener)playCaptchaAlarm();
+        function status(message){let node=document.getElementById('nexus-hcaptcha-status');if(!node){node=document.createElement('div');node.id='nexus-hcaptcha-status';document.querySelector('.faucet-page-card')?.append(node);}node.textContent=message;}
+        const frame=()=>document.querySelector('iframe[src*="hcaptcha.com"],iframe[title*="hCaptcha"]');
+        const solved=()=>[...document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]')].some(node=>String(node.value||'').trim().length>20);
+        const challengeOpen=()=>[...document.querySelectorAll('iframe')].some(node=>/challenge/i.test(node.title||'')&&node.getBoundingClientRect().width>200&&node.getBoundingClientRect().height>180&&getComputedStyle(node).visibility!=='hidden');
+        const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);return url.searchParams.get('sitekey')||url.searchParams.get('k')||'';}catch{return '';}};
+        let telegramSent=false;
+        window.addEventListener('message',event=>{if(event.origin!==location.origin||event.data?.source!=='nexus-telegram-captcha'||event.data.type!=='token')return;const token=String(event.data.captcha_token||'');if(token.length<20)return;document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]').forEach(node=>{node.value=token;node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));});const button=document.querySelector('[data-claim-faucet]');if(button){button.disabled=false;button.removeAttribute('disabled');}status('Telegram CAPTCHA cozumu alindi; islem tamamlaniyor…');});
+        const id = setInterval(() => {
+            const captcha=frame(),button=document.querySelector('[data-claim-faucet]');
+            if(captcha&&!telegramSent){const key=siteKey();if(key){telegramSent=true;send('telegram-captcha','',{site_key:key,kind:'faucet'});}}
+            if(!captcha&&!challengeOpen()&&Date.now()>=captchaDetectDeadline&&!captchaMissingNotified){captchaMissingNotified=true;status('Captcha görünmedi; popup açık bırakıldı. Sayfa yenilenmeyecek.');return;}
+            if(captcha)placeCaptchaAnchor(captcha);else clearCaptchaAnchor();
+            if(captcha&&!focused){focused=true;captcha.scrollIntoView({block:'center',behavior:'smooth'});captcha.focus();status('Ben bir insanım kutusuna tıkla ve doğrulamayı tamamla.');}
+            const verified=solved();
+            if(!verified){clicked=false;if(Date.now()>=approvalDeadline&&!alarmNotified){alarmNotified=true;status('hCaptcha onayı bekleniyor; popup açık kalacak, sayfa yenilenmeyecek.');return;}if(challengeOpen()){if(!challengeNotified){challengeNotified=true;send('challenge','Görsel hCaptcha açıldı; manuel çözüm bekleniyor.');}status('Görsel hCaptcha açıldı; manuel çözüm bekleniyor…');return;}challengeNotified=false;if(captcha)status('Nexus Motor hCaptcha onayını bekliyor…');return;}
+            alarmNotified=false;challengeNotified=false;
+            status('hCaptcha doğrulandı; Faucet Pay hazırlanıyor…');
+            if(button&&!clicked&&!button.disabled&&/claim/i.test(button.textContent || '')){
+                clicked = true;
+                send('verified', 'Güvenlik doğrulaması alındı; resmi claim düğmesi tetiklendi.');
+                button.click();
+                return;
+            }
+            if(clicked && /refill|next claim|claimed|claim successful|cooldown|available again|sonraki|yeniden|başarı/i.test(document.body.innerText || '')){
+                send('claimed', 'Faucet Pay başarıyla alındı.');
+                clearInterval(id);
+                clearCaptchaAnchor();
+                try{window.opener?.focus();}catch{}
+                setTimeout(()=>window.close(),700);
+            }
+        }, 350);
+        window.addEventListener('beforeunload', () => {clearInterval(id);clearCaptchaAnchor();}, { once:true });
+    }
+
+    function runCheckpointBridge(){
+        let wasOpen=false,continueClicked=false,focused=false,alarmNotified=false,challengeNotified=false,captchaMissingNotified=false;
+        let captchaDetectDeadline=0;
+        let approvalDeadline=0;
+        const send=(type,extra={})=>window.opener?.postMessage({source:'nexus-farm-checkpoint',type,...extra},location.origin);
+        document.title='Nexus Farm Security';
+        const style=document.createElement('style');
+        style.textContent=`body{min-width:0!important;background:#0c2119!important;overflow:hidden!important}.topbar,.sidebar,.main-content,#nx5-root,#nx5-launcher,[id^="nx5-window-"]{display:none!important}.app-shell{display:block!important}.farm-recaptcha-backdrop{position:fixed!important;inset:0!important;background:#0c2119!important}.farm-checkpoint-dialog{width:min(440px,calc(100vw - 24px))!important;max-height:calc(100vh - 24px)!important;margin:auto!important}.farm-checkpoint-card{box-shadow:none!important;padding:18px!important}.farm-checkpoint-card>header,.farm-checkpoint-card>h1,.farm-checkpoint-card>h2,#farm-checkpoint-title{display:none!important}.farm-checkpoint-card>p,.farm-checkpoint-card .description,.farm-checkpoint-card .checkpoint-description,.farm-checkpoint-card .security-copy{display:none!important}.farm-checkpoint-card a,.farm-checkpoint-card .try-again,.farm-checkpoint-card [data-refresh-checkpoint]{display:none!important}.farm-checkpoint-widget{margin:0!important}.farm-checkpoint-widget>img,.farm-checkpoint-widget>label,#farm-number-answer{display:none!important}.h-captcha,[data-hcaptcha-widget-id],iframe[src*="hcaptcha.com"],iframe[title*="hCaptcha"]{display:block!important;margin:12px auto!important;visibility:visible!important;opacity:1!important}#farm-hold-button{display:block!important;width:100%!important;margin-top:14px!important}#nexus-engine-status{margin:10px 0;text-align:center;font:12px Arial,sans-serif;color:#a8bdad}`;
+        document.head.appendChild(style);send('opened');if(!window.opener)playCaptchaAlarm();
+        function status(message){let node=document.getElementById('nexus-engine-status');if(!node){node=document.createElement('div');node.id='nexus-engine-status';document.querySelector('.farm-checkpoint-widget')?.append(node);}node.textContent=message;}
+        const frame=()=>document.querySelector('iframe[src*="hcaptcha.com"],iframe[title*="hCaptcha"]');
+        const solved=()=>[...document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]')].some(node=>String(node.value||'').trim().length>20);
+        const challengeOpen=()=>[...document.querySelectorAll('iframe')].some(node=>/challenge/i.test(node.title||'')&&node.getBoundingClientRect().width>200&&node.getBoundingClientRect().height>180&&getComputedStyle(node).visibility!=='hidden');
+        const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);return url.searchParams.get('sitekey')||url.searchParams.get('k')||'';}catch{return '';}};
+        let telegramSent=false;
+        window.addEventListener('message',event=>{if(event.origin!==location.origin||event.data?.source!=='nexus-telegram-captcha'||event.data.type!=='token')return;const token=String(event.data.captcha_token||'');if(token.length<20)return;document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]').forEach(node=>{node.value=token;node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));});const button=document.querySelector('#farm-hold-button');if(button){button.disabled=false;button.removeAttribute('disabled');}status('Telegram CAPTCHA cozumu alindi; ciftlige donuluyor…');});
+        const id=setInterval(()=>{
+            const dialog=document.querySelector('#farm-checkpoint-dialog');
+            if(dialog?.open){
+                if(!wasOpen){captchaDetectDeadline=Date.now()+12000;approvalDeadline=Date.now()+10000;}
+                wasOpen=true;const captcha=frame(),button=document.querySelector('#farm-hold-button');
+                if(captcha&&!telegramSent){const key=siteKey();if(key){telegramSent=true;send('telegram-captcha',{site_key:key,kind:'farm'});}}
+                if(!captcha&&!challengeOpen()&&captchaDetectDeadline&&Date.now()>=captchaDetectDeadline&&!captchaMissingNotified){captchaMissingNotified=true;status('Captcha görünmedi; popup açık bırakıldı. Sayfa yenilenmeyecek.');return;}
+                if(captcha)placeCaptchaAnchor(captcha);else clearCaptchaAnchor();
+                if(captcha&&!focused){focused=true;captcha.scrollIntoView({block:'center',behavior:'smooth'});captcha.focus();status('Ben bir insanım kutusuna tıkla ve doğrulamayı tamamla.');}
+                const verified=solved();
+                if(!verified){continueClicked=false;if(approvalDeadline&&Date.now()>=approvalDeadline&&!alarmNotified){alarmNotified=true;status('hCaptcha onayı bekleniyor; popup açık kalacak, sayfa yenilenmeyecek.');return;}if(challengeOpen()){if(!challengeNotified){challengeNotified=true;send('challenge');}status('Görsel hCaptcha açıldı; manuel çözüm bekleniyor…');return;}challengeNotified=false;if(captcha)status('Nexus Motor hCaptcha onayını bekliyor…');return;}
+                alarmNotified=false;challengeNotified=false;
+                status('hCaptcha doğrulandı; çiftliğe dönüş hazırlanıyor…');
+                if(!continueClicked&&button&&!button.disabled){continueClicked=true;button.click();}
+            }
+            if(continueClicked&&wasOpen&&dialog&&!dialog.open){send('passed');clearInterval(id);clearCaptchaAnchor();try{window.opener?.focus();}catch{}setTimeout(()=>window.close(),600);}
+        },300);
+        window.addEventListener('beforeunload',()=>{clearInterval(id);clearCaptchaAnchor();},{once:true});
+    }
+
+    function installStyle(){
+        const style = document.createElement('style');
+        style.id = STYLE_ID; style.textContent = css; document.head.appendChild(style);
+    }
+    function savePosition(element, key){
+        const rect = element.getBoundingClientRect();
+        const pos = { x:Math.round(rect.left), y:Math.round(rect.top) };
+        if(key === 'main') state.uiPos = pos; else state.windowPositions[key] = pos;
+        save();
+    }
+    function enableDrag(element, key){
+        const header = element.querySelector('.nx5-head');
+        let drag = null;
+        header.addEventListener('pointerdown', event => {
+            if(event.button !== 0 || event.target.closest('button')) return;
+            const rect = element.getBoundingClientRect();
+            drag = { id:event.pointerId, x:event.clientX, y:event.clientY, left:rect.left, top:rect.top };
+            header.setPointerCapture?.(event.pointerId); bringFront(element); event.preventDefault();
+        });
+        header.addEventListener('pointermove', event => {
+            if(!drag || event.pointerId !== drag.id) return;
+            element.style.left = `${Math.max(0, Math.min(window.innerWidth - element.offsetWidth, drag.left + event.clientX - drag.x))}px`;
+            element.style.top = `${Math.max(0, Math.min(window.innerHeight - 62, drag.top + event.clientY - drag.y))}px`;
+            element.style.right = 'auto';
+        });
+        header.addEventListener('pointerup', event => { if(drag && event.pointerId === drag.id){ drag = null; savePosition(element,key); } });
+        header.addEventListener('pointercancel', () => { drag = null; });
+        element.addEventListener('pointerdown', () => bringFront(element));
+    }
+    function bringFront(element){ state.z += 1; element.style.zIndex = String(state.z); }
+
+    function root(){ return document.getElementById(ROOT_ID); }
+    function showRoot(){
+        root().hidden=false;document.getElementById(LAUNCHER_ID).hidden=true;
+        document.querySelectorAll(`[id^="${WINDOW_PREFIX}"][data-nx5-minimized="1"]`).forEach(panel=>{panel.hidden=false;delete panel.dataset.nx5Minimized;});
+    }
+    function hideRoot(){
+        root().hidden=true;document.getElementById(LAUNCHER_ID).hidden=false;
+        document.querySelectorAll(`[id^="${WINDOW_PREFIX}"]`).forEach(panel=>{if(!panel.hidden){panel.hidden=true;panel.dataset.nx5Minimized='1';}});
+    }
+    function installLauncher(){
+        const launcher = document.createElement('button');
+        launcher.id = LAUNCHER_ID; launcher.textContent = 'N'; launcher.title = 'Nexus CryptoCrops'; launcher.hidden = true;
+        launcher.onclick = showRoot; document.body.appendChild(launcher);
+    }
+    function shell(){
+        const panel = document.createElement('section'); panel.id = ROOT_ID;
+        if(state.uiPos){ panel.style.left=`${state.uiPos.x}px`; panel.style.top=`${state.uiPos.y}px`; panel.style.right='auto'; }
+        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.0</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
+        document.body.appendChild(panel);
+        panel.querySelector('[data-close]').onclick=hideRoot;
+        panel.querySelector('[data-window="settings"]').onclick=()=>toggleWindow('settings');
+        panel.querySelector('[data-copy-all]').onclick=()=>copyText(state.logs.slice().reverse().map(entry=>`[${entry.at}] ${entry.message}`).join('\n'));
+        panel.querySelector('[data-clear-logs]').onclick=()=>{state.logs=[];renderLogs();};
+        enableDrag(panel,'main'); return panel;
+    }
+
+    function formatLeft(timestamp){
+        const ms = Number(timestamp || 0) - (Date.now() + state.offset);
+        if(ms <= 0) return t('ready');
+        const seconds = Math.ceil(ms / 1000);
+        return `${Math.floor(seconds/3600)}sa ${String(Math.floor(seconds/60)%60).padStart(2,'0')}dk ${String(seconds%60).padStart(2,'0')}sn`;
+    }
+    const itemName = item => item?.name || item?.seed_name || seedInfo(item?.seed_id || item?.id)?.name || item?.seed_id || item?.id || 'Ürün';
+    const seedInfo = id => state.catalog.get(id) || (state.farm?.seeds || []).find(seed => (seed.seed_id || seed.id) === id) || null;
+    const seedIcon = id => `<img class="nx5-seed" src="/assets/items/thumbs/seeds/${encodeURIComponent(id || '')}.png?v=2" alt="Seed" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'nx5-seed-fallback',textContent:'S'}))">`;
+    const crops = () => state.farm?.crops || [];
+    const capacity = () => Number(state.farm?.profile?.total_capacity || state.farm?.profile?.base_capacity || 0);
+    const ownedSeeds = () => state.farm?.seeds || [];
+    const inventory = () => state.farm?.inventory || state.farm?.barn || [];
+    const inventoryQty = id => Number(inventory().find(item => (item.seed_id || item.id) === id)?.quantity || 0);
+    const plantedCopies = id => crops().filter(crop => crop.seed_id === id).length;
+    const ownedSeed = id => ownedSeeds().find(seed => (seed.seed_id || seed.id) === id);
+    const freeCopies = id => Math.max(0, Number(ownedSeed(id)?.quantity || 0) - plantedCopies(id));
+    const isReady = crop => Date.now() + state.offset >= Number(crop.ready_at || 0);
+    const faucetIsReady = () => {
+        const faucet=state.farm?.faucet;if(!faucet)return false;
+        const nextAt=Number(faucet.next_claim_at||0),serverNow=Date.now()+state.offset;
+        if(Number.isFinite(nextAt)&&nextAt>0)return nextAt<=serverNow&&faucet.available!==false;
+        return faucet.available===true;
+    };
+
+    function log(message,type='ok'){
+        state.logs.unshift({ message:String(message), type, at:new Date().toLocaleTimeString('tr-TR',{hour12:false}) });
+        state.logs=state.logs.slice(0,60); renderLogs(true);
+    }
+    function renderLogs(fresh=false){
+        const rootEl=root();const target=rootEl?.querySelector('.nx5-log'); if(!target) return;
+        const glyph={ok:'okc',warn:'warnc',bad:'badc',info:'infoc'};const counts={ok:0,warn:0,bad:0};
+        state.logs.forEach(entry=>{if(counts[entry.type]!==undefined)counts[entry.type]++;});
+        const box=rootEl.querySelector('[data-log-counts]');
+        if(box)box.innerHTML=`<span class="nx5-count ok">${counts.ok}</span><span class="nx5-count warn">${counts.warn}</span><span class="nx5-count bad">${counts.bad}</span>`;
+        target.innerHTML=state.logs.length ? state.logs.map((entry,index)=>`<div class="nx5-log-row ${entry.type}${fresh&&index===0?' fresh':''}"><span class="nx5-lg-ic">${uiIcon(glyph[entry.type]||'infoc','nx5-lg-svg')}</span><span class="nx5-log-time">${entry.at}</span><span class="nx5-log-msg">${esc(entry.message)}</span><button class="nx5-copy" data-copy-log="${index}" title="Copy">${uiIcon('copy','nx5-inline-icon')}</button></div>`).join('') : `<div class="nx5-empty">${t('logReady')}</div>`;
+        if(fresh)target.scrollTop=0;
+        target.querySelectorAll('[data-copy-log]').forEach(button=>button.onclick=()=>copyText(`[${state.logs[button.dataset.copyLog].at}] ${state.logs[button.dataset.copyLog].message}`));
+    }
+    async function copyText(text){
+        try { await navigator.clipboard.writeText(text); log(t('copied'),'info'); }
+        catch { log(t('copyBlocked'),'warn'); }
+    }
+
+    function mainMarkup(){
+        const active=view=>document.getElementById(WINDOW_PREFIX+view)?'open':'';
+        const profile=state.farm?.profile||{};const locale=state.lang==='tr'?'tr-TR':'en-US';
+        return `<div class="nx5-card nx5-overview"><div class="nx5-overview-copy"><strong>${t('farmControl')}</strong><div class="nx5-muted">${t('planted',{used:crops().length,total:capacity()})}</div></div><div class="nx5-overview-stats"><span class="nx5-stat"><img src="/assets/ui-icons/coin.png?v=2" alt=""><b>${Number(profile.farm_coins||0).toLocaleString(locale)}</b></span><span class="nx5-stat">LV <b>${Number(profile.farm_level||0)}</b></span><span class="nx5-pill">${state.mod2?'MOD 2':'AUTO 1'}</span></div></div><div class="nx5-dashboard">
+            <button class="nx5-menu-card ${active('farm')}" style="--ac:#34f5a1" data-window="farm"><span class="nx5-menu-icon">${uiIcon('field')}</span><strong>${t('fields')}</strong><small>${t('fieldsSub')}</small></button>
+            <button class="nx5-menu-card ${active('orders')}" style="--ac:#ffd86b" data-window="orders"><span class="nx5-menu-icon">${uiIcon('orders')}</span><strong>${t('orders')}</strong><small>${t('ordersSub')}</small></button>
+            <button class="nx5-menu-card ${active('barn')}" style="--ac:#ff8f6b" data-window="barn"><span class="nx5-menu-icon">${uiIcon('barn')}</span><strong>${t('barn')}</strong><small>${t('barnSub')}</small></button>
+            <button class="nx5-menu-card ${active('earn')}" style="--ac:#4de1ff" data-window="earn"><span class="nx5-menu-icon">${uiIcon('earn')}</span><strong>${t('earn')}</strong><small>${t('earnSub')}</small></button>
+        </div><div class="nx5-card" style="margin-top:10px"><button class="nx5-btn wide nx5-start ${state.running?'danger':''}" data-start>${uiIcon(state.running?'stop':'play','nx5-inline-icon')}${state.running?t('stop'):t('start')}</button></div>`;
+    }
+    function renderMain(){
+        const main=root()?.querySelector('.nx5-main'); if(!main) return; main.innerHTML=mainMarkup();root().classList.toggle('nx5-on',!!state.running);if(!introPlayed){introPlayed=true;main.classList.add('nx5-intro');setTimeout(()=>main.classList.remove('nx5-intro'),1500);}
+        main.querySelectorAll('[data-window]').forEach(button=>button.onclick=()=>toggleWindow(button.dataset.window));
+        main.querySelector('[data-start]').onclick=()=>{ state.running=!state.running; save(); reportBridgeStatus(); log(state.running?t('modeStarted',{mode:state.mod2?'Mod 2':'Auto 1'}):t('botStopped'),state.running?'ok':'warn'); renderMain(); if(state.running) scheduleCycle(0); };
+        renderLogs();
+    }
+
+    const windowMeta=view=>({farm:['field',t('fields')],orders:['orders',t('orders')],barn:['barn',t('barn')],earn:['earn',t('earn')],settings:['settings',t('settings')]})[view];
+    function toggleWindow(view){ const existing=document.getElementById(WINDOW_PREFIX+view); if(existing){ closePanel(existing); return; } openWindow(view); }
+    function openWindow(view){
+        const [icon,title]=windowMeta(view); const panel=document.createElement('section'); panel.id=WINDOW_PREFIX+view; panel.className='nx5-window';
+        const pos=state.windowPositions[view]; const fallback={farm:[26,92],orders:[566,92],barn:[296,150],earn:[430,130],settings:[520,82]}[view]||[80,100];
+        panel.style.left=`${pos?.x??Math.min(fallback[0],Math.max(8,window.innerWidth-540))}px`; panel.style.top=`${pos?.y??fallback[1]}px`;
+        panel.innerHTML=`<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">${uiIcon(icon,'nx5-title-svg')}</span><div><div class="nx5-title"><span class="nx5-tt">${title}</span></div><div class="nx5-sub">${t('separate')}</div></div></div><button class="nx5-icon nx5-close" data-close title="Close">X</button></header><div class="nx5-window-body"></div>`;
+        document.body.appendChild(panel); panel.querySelector('[data-close]').onclick=()=>closePanel(panel); enableDrag(panel,view); bringFront(panel); const winBody=panel.querySelector('.nx5-window-body'); winBody.classList.add('nx5-intro'); setTimeout(()=>winBody.classList.remove('nx5-intro'),1500); renderWindow(view); renderMain();
+    }
+    function refreshOpenWindows(){ ['farm','orders','barn','earn','settings'].forEach(view=>{if(document.getElementById(WINDOW_PREFIX+view))renderWindow(view);}); renderMain(); }
+    function renderWindow(view){
+        const panel=document.getElementById(WINDOW_PREFIX+view); if(!panel)return; const body=panel.querySelector('.nx5-window-body');
+        body.innerHTML=view==='farm'?farmMarkup():view==='orders'?ordersMarkup():view==='barn'?barnMarkup():view==='earn'?earnMarkup():settingsMarkup(); bindWindow(view,panel);
+    }
+
+    function farmMarkup(){
+        let html='<div class="nx5-grid">';
+        for(let plot=1;plot<=capacity();plot++){
+            const crop=crops().find(item=>Number(item.plot_index)===plot); const selected=state.plotSeeds[plot];
+            html+=`<div class="nx5-card"><div class="nx5-row"><strong>${state.lang==='tr'?'Tarla':'Field'} ${plot}</strong><span class="nx5-status ${crop?(isReady(crop)?'ok':'warn'):''}">${crop?(isReady(crop)?t('harvest'):t('growing')):t('empty')}</span></div>${crop?`<div class="nx5-item">${seedIcon(crop.seed_id)}<span class="nx5-item-copy"><strong>${esc(itemName(crop))}</strong><span class="nx5-time" data-at="${crop.ready_at}">${formatLeft(crop.ready_at)}</span></span></div>`:`<div class="nx5-muted" style="padding:12px 0">${t('plantingWait')}</div>`}<div class="nx5-muted">${t('nextSeed')}: ${state.autoPlots.has(plot)?t('autoSelected'):(selected?esc(seedInfo(selected)?.name||selected):t('noSeed'))}</div><button class="nx5-btn wide ${state.autoPlots.has(plot)?'active':''}" style="margin-top:7px" data-pick-plot="${plot}">${t('chooseSeed')}</button></div>`;
+        }
+        html+='</div>';
+        if(state.seedPlot){
+            html+=`<div class="nx5-card" style="margin-top:10px"><div class="nx5-row"><strong>${state.lang==='tr'?'Tarla':'Field'} ${state.seedPlot} · ${t('chooseSeed')}</strong><div class="nx5-actions"><button class="nx5-btn secondary" data-clear-seed="${state.seedPlot}">${t('clear')}</button><button class="nx5-btn ${state.autoPlots.has(state.seedPlot)?'active':'secondary'}" data-auto-seed="${state.seedPlot}">${t('autoSelect')}</button></div></div>${ownedSeeds().filter(seed=>Number(seed.quantity||0)>0).map(seed=>{const id=seed.seed_id||seed.id;return `<button class="nx5-item ${!state.autoPlots.has(state.seedPlot)&&state.plotSeeds[state.seedPlot]===id?'on':''}" data-choose-seed="${esc(id)}" data-plot="${state.seedPlot}">${seedIcon(id)}<span class="nx5-item-copy"><strong>${esc(itemName(seed))}</strong><span class="nx5-muted">${t('permanent',{free:freeCopies(id),total:Number(seed.quantity||0)})}</span></span></button>`;}).join('')||`<div class="nx5-empty">${t('noOwnedSeed')}</div>`}</div>`;
+        }
+        return html;
+    }
+    function orderProgress(requirement){ return `${Math.min(inventoryQty(requirement.seed_id),Number(requirement.quantity||0))}/${Number(requirement.quantity||0)}`; }
+    function ordersMarkup(){
+        const orders=state.farm?.orders||[];
+        return `<div class="nx5-card nx5-setting"><div><strong>${t('autoComplete')}</strong><div class="nx5-muted">${t('autoCompleteSub')}</div></div><label class="nx5-switch"><input type="checkbox" data-auto-orders ${state.autoOrders?'checked':''}><span></span></label></div><div class="nx5-order-list">${orders.map(order=>`<div class="nx5-card nx5-order-card"><div class="nx5-row"><strong>${uiIcon('orders','nx5-inline-icon')}${esc(order.title||'Farm Order')}</strong><span class="nx5-status ${order.ready?'ok':'warn'}">${order.ready?t('ready'):t('waiting')}</span></div>${(order.requirements||[]).map(req=>{const total=Math.max(1,Number(req.quantity||0));const have=Math.min(inventoryQty(req.seed_id),total);return `<div class="nx5-order-req"><div class="nx5-order-req-head"><span>${esc(seedInfo(req.seed_id)?.name||req.seed_id)}</span><b>${have}/${total}</b></div><div class="nx5-progress"><span style="width:${Math.round(have/total*100)}%"></span></div></div>`;}).join('')}<button class="nx5-btn wide" style="margin-top:10px" data-order="${esc(order.order_id)}" ${order.ready?'':'disabled'}>${order.ready?t('complete'):t('missing')}</button></div>`).join('')||`<div class="nx5-empty">${t('noOrders')}</div>`}</div>`;
+    }
+    function barnMarkup(){
+        const items=inventory();
+        return `<div class="nx5-card nx5-setting"><div><strong>${t('autoSell')}</strong><div class="nx5-muted">${t('autoSellSub')}</div></div><label class="nx5-switch"><input type="checkbox" data-auto-sell ${state.autoSell?'checked':''}><span></span></label></div><div class="nx5-card">${items.map(item=>{const id=item.seed_id||item.id;const quantity=Number(item.fresh_quantity??item.quantity??0);const selected=state.autoSell||state.selectedSell.has(id);return `<button class="nx5-item ${selected?'on':''}" data-sell="${esc(id)}" ${state.autoSell?'disabled':''}>${seedIcon(id)}<span class="nx5-item-copy"><strong>${esc(itemName(item))}</strong><span class="nx5-muted">${t('fresh',{count:quantity})} · ${selected?t('selected'):t('select')}</span></span></button>`;}).join('')||`<div class="nx5-empty">${t('noSell')}</div>`}<button class="nx5-btn wide" style="margin-top:9px" data-sell-now>${t('sellSelected')}</button></div>`;
+    }
+    function earnMarkup(){
+        const faucet=state.farm?.faucet||{};
+        return `<div class="nx5-menu-card nx5-faucet ${state.faucetArmed?'faucet-on':''}"><div class="nx5-faucet-line"><span class="nx5-menu-icon">${uiIcon('faucet')}</span><div class="nx5-faucet-copy"><strong>FAUCET PAY</strong><span class="nx5-time" data-faucet-at="${Number(faucet.next_claim_at||0)}">${faucetIsReady()?t('ready'):formatLeft(faucet.next_claim_at)}</span></div><span class="nx5-status ${state.faucetArmed?'ok':'warn'}">${state.faucetArmed?t('selected'):t('closed')}</span></div><div class="nx5-setting nx5-faucet-toggle"><div><strong>${t('faucetAuto')}</strong><div class="nx5-muted">${t('faucetAutoSub')}</div></div><label class="nx5-switch" title="${state.faucetArmed?t('disable'):t('enable')}"><input type="checkbox" data-faucet-enabled ${state.faucetArmed?'checked':''}><span></span></label></div><small>${t('faucetInfo')}</small><button class="nx5-btn nx5-manual" data-faucet-open>${t('manualOpen')}</button></div>`;
+    }
+    function settingsMarkup(){
+        const engine=!!document.querySelector('#farm3d-canvas');
+        return `<div class="nx5-card"><div class="nx5-setting"><div><strong>Mod 2 <span class="nx5-led ${engine?'on':''}" title="${engine?t('engineFound'):t('engineMissing')}"></span></strong><div class="nx5-muted">${t('mod2Sub')}</div></div><label class="nx5-switch"><input type="checkbox" data-mod2 ${state.mod2?'checked':''}><span></span></label></div><div class="nx5-setting"><div><strong>${t('fallback')}</strong><div class="nx5-muted">${t('fallbackSub')}</div></div><label class="nx5-switch"><input type="checkbox" data-fallback ${state.mod2Fallback?'checked':''}><span></span></label></div><div class="nx5-setting"><div><strong>${t('language')}</strong></div><select class="nx5-select" data-language><option value="tr" ${state.lang==='tr'?'selected':''}>${t('turkish')}</option><option value="en" ${state.lang==='en'?'selected':''}>${t('english')}</option></select></div></div>`;
+    }
+    function bindWindow(view,panel){
+        if(view==='farm'){
+            panel.querySelectorAll('[data-pick-plot]').forEach(button=>button.onclick=()=>{state.seedPlot=Number(button.dataset.pickPlot);renderWindow('farm');});
+            panel.querySelectorAll('[data-choose-seed]').forEach(button=>button.onclick=()=>{const plot=Number(button.dataset.plot);state.autoPlots.delete(plot);state.plotSeeds[plot]=button.dataset.chooseSeed;state.seedPlot=0;save();log(t('seedChosen',{plot,seed:seedInfo(state.plotSeeds[plot])?.name||state.plotSeeds[plot]}));renderWindow('farm');if(state.running)scheduleCycle(0);});
+            panel.querySelector('[data-clear-seed]')?.addEventListener('click',event=>{const plot=Number(event.currentTarget.dataset.clearSeed);delete state.plotSeeds[plot];state.autoPlots.delete(plot);state.seedPlot=0;save();renderWindow('farm');});
+            panel.querySelector('[data-auto-seed]')?.addEventListener('click',event=>{const plot=Number(event.currentTarget.dataset.autoSeed);state.autoPlots.has(plot)?state.autoPlots.delete(plot):state.autoPlots.add(plot);if(state.autoPlots.has(plot))delete state.plotSeeds[plot];save();renderWindow('farm');if(state.running)scheduleCycle(0);});
+        }
+        if(view==='orders'){
+            panel.querySelector('[data-auto-orders]')?.addEventListener('change',event=>{state.autoOrders=event.target.checked;save();log(t('autoCompleteState',{state:t(state.autoOrders?'opened':'closedWord')}),state.autoOrders?'ok':'warn');renderWindow('orders');if(state.running&&state.autoOrders)scheduleCycle(0);});
+            panel.querySelectorAll('[data-order]').forEach(button=>button.onclick=()=>fulfill((state.farm?.orders||[]).find(order=>order.order_id===button.dataset.order)));
+        }
+        if(view==='barn'){
+            panel.querySelector('[data-auto-sell]')?.addEventListener('change',event=>{state.autoSell=event.target.checked;save();log(t('autoSellState',{state:t(state.autoSell?'opened':'closedWord')}),state.autoSell?'ok':'warn');renderWindow('barn');});
+            panel.querySelectorAll('[data-sell]').forEach(button=>button.onclick=()=>{state.selectedSell.has(button.dataset.sell)?state.selectedSell.delete(button.dataset.sell):state.selectedSell.add(button.dataset.sell);save();renderWindow('barn');});
+            panel.querySelector('[data-sell-now]')?.addEventListener('click',autoSell);
+        }
+        if(view==='earn'){
+            panel.querySelector('[data-faucet-enabled]').onchange=event=>{state.faucetArmed=event.target.checked;state.faucetReadyKey='';if(!state.faucetArmed){clearTimeout(state.faucetRetryTimer);state.faucetRetryTimer=null;try{if(state.faucetPopup&&!state.faucetPopup.closed)state.faucetPopup.close();}catch{}state.faucetPopup=null;}save();log(t('faucetSelected',{state:state.faucetArmed?t('selected'):t('closed')}),state.faucetArmed?'ok':'warn');renderWindow('earn');};
+            panel.querySelector('[data-faucet-open]').onclick=()=>openFaucetPopup(false);
+        }
+        if(view==='settings'){
+            panel.querySelector('[data-mod2]').onchange=event=>{state.mod2=event.target.checked;save();log(t('mod2State',{state:t(state.mod2?'opened':'closedWord')}),state.mod2?'ok':'warn');renderWindow('settings');renderMain();};
+            panel.querySelector('[data-fallback]').onchange=event=>{state.mod2Fallback=event.target.checked;save();log(t('fallbackState',{state:t(state.mod2Fallback?'opened':'closedWord')}),state.mod2Fallback?'ok':'warn');renderWindow('settings');};
+            panel.querySelector('[data-language]').onchange=event=>{state.lang=event.target.value==='en'?'en':'tr';save();updateLanguage();};
+        }
+    }
+    function updateLanguage(){
+        root().querySelector('[data-subtitle]').textContent=t('subtitle');root().querySelector('[data-log-title]').textContent=t('activityLog');root().querySelector('[data-copy-all]').title=t('copyAll');
+        document.querySelectorAll(`[id^="${WINDOW_PREFIX}"]`).forEach(panel=>panel.remove());renderMain();renderLogs();toggleWindow('settings');
+    }
+
+    async function api(url,options={}){
+        const response=await fetch(url,{credentials:'same-origin',cache:'no-store',...options}); let data={};
+        try{data=await response.json();}catch{}
+        if(!response.ok){
+            const error=Error(`${url} HTTP ${response.status}: ${data.message||data.error||'istek reddedildi'}`);error.code=data.error||`HTTP_${response.status}`;
+            if(error.code==='FARM_CHECKPOINT_REQUIRED')requestFarmCheckpoint();
+            throw error;
+        }
+        return data;
+    }
+    async function load(sayLog=false){
+        try{
+            const data=await api('/api/bootstrap'); state.farm=data.farm||data; state.homestead=data.homestead||null; state.offset=Number(state.farm.server_now||Date.now())-Date.now();
+            if(state.checkpointPending&&state.farm?.farm_checkpoint&&!state.farm.farm_checkpoint.required){state.checkpointPending=false;state.checkpointNotified=false;log(t('checkpointPassed'),'ok');}
+            const unknownOwned=(state.farm.seeds||[]).some(seed=>!state.catalog.has(seed.seed_id||seed.id));
+            if(!state.catalog.size||unknownOwned){const catalog=await api('/api/catalog?version=3');state.catalog=new Map((catalog.seeds||[]).map(seed=>[seed.seed_id,seed]));}
+            state.lastLoadAt=Date.now();
+            if(sayLog)log(t('dataRefreshed'),'info'); refreshOpenWindows(); return true;
+        }catch(error){log(t('dataError',{error:error.message}),'bad');return false;}
+    }
+    async function waitFor(check,timeout=7000,step=120){const end=now()+timeout;while(now()<end){try{if(await check())return true;}catch(error){if(isCheckpointError(error))throw error;}await wait(step);}return false;}
+    const isCheckpointError=error=>error?.code==='FARM_CHECKPOINT_REQUIRED';
+    function checkpointError(){const error=Error('FARM_CHECKPOINT_REQUIRED');error.code='FARM_CHECKPOINT_REQUIRED';return error;}
+    function checkpointVisible(){return !!document.querySelector('#farm-checkpoint-dialog')?.open;}
+    function requestFarmCheckpoint(){
+        state.checkpointPending=true;
+        if(!state.checkpointNotified){state.checkpointNotified=true;log(t('checkpointNeeded'),'warn');}
+        if(state.checkpointPopup&&!state.checkpointPopup.closed){state.checkpointPopup.focus();return;}
+        state.checkpointPopup=window.open('/farm/?nexus_checkpoint=1','nexusFarmSecurity','popup=yes,width=590,height=680,resizable=yes,scrollbars=yes');
+        log(state.checkpointPopup?t('checkpointOpened'):t('checkpointBlocked'),state.checkpointPopup?'info':'bad');
+        if(!state.checkpointPopup&&!checkpointVisible())state.checkpointProbeAt=Date.now()+5000;
+    }
+    function popupWasRedirected(popup){
+        if(!popup||popup.closed)return false;
+        try{const href=String(popup.location.href||'');return href!=='about:blank'&&!href.startsWith(location.origin);}
+        catch{return true;}
+    }
+    function retryFarmCheckpoint(){
+        if(state.checkpointRetryTimer||state.destroyed||!state.running)return;
+        state.checkpointRetryCount+=1;state.checkpointProbeAt=Date.now()+15000;
+        try{if(state.checkpointPopup&&!state.checkpointPopup.closed)state.checkpointPopup.close();}catch{}
+        state.checkpointPopup=null;log(t('checkpointRetry'),'warn');
+        state.checkpointRetryTimer=setTimeout(()=>{state.checkpointRetryTimer=null;if(state.running&&!state.destroyed)requestFarmCheckpoint();},1200);
+    }
+    async function confirmFarmCheckpoint(){
+        if(state.checkpointConfirming||state.destroyed)return;
+        state.checkpointConfirming=true;state.checkpointPending=true;
+        try{
+            for(let attempt=0;attempt<10&&!state.destroyed;attempt++){
+                await wait(attempt?1200:700);
+                await load();
+                if(!state.checkpointPending){scheduleCycle(700);return;}
+            }
+            state.checkpointProbeAt=Date.now()+15000;
+            log(t('checkpointServerWait'),'warn');
+        }finally{state.checkpointConfirming=false;}
+    }
+    function canvasPlotIndex(){const match=(document.querySelector('#farm-selection-kicker')?.textContent||'').match(/(\d+)/);return Math.max(1,Number(match?.[1]||1));}
+    function dispatchCanvasKey(key){const canvas=document.querySelector('#farm3d-canvas');if(!canvas)throw Error(t('enginePageMissing'));canvas.focus({preventScroll:true});canvas.dispatchEvent(new KeyboardEvent('keydown',{key,code:key,bubbles:true,cancelable:true}));}
+    async function selectRuntimePlot(plot){
+        const total=capacity();if(!total||plot<1||plot>total)throw Error(t('invalidPlot'));
+        const visible=canvasPlotIndex();
+        if(state.runtimePlot===null||state.runtimeKicker!==visible){state.runtimePlot=visible;state.runtimeKicker=visible;}
+        const current=state.runtimePlot;const right=(plot-current+total)%total;const left=(current-plot+total)%total;const key=right<=left?'ArrowRight':'ArrowLeft';
+        for(let i=0;i<Math.min(right,left);i++){dispatchCanvasKey(key);await wait(45);}
+        state.runtimePlot=plot;
+    }
+    async function runtimePlant(seed,plot){
+        await selectRuntimePlot(plot);
+        const action=document.querySelector('#farm-primary-action');if(!action)throw Error(t('fieldActionMissing'));
+        let opened=false;
+        for(let attempt=0;attempt<3&&!opened;attempt++){
+            if(document.querySelector('#seed-dialog')?.open)document.querySelector('#seed-dialog').close();
+            await wait(attempt?900:350);action.click();opened=await waitFor(()=>{if(checkpointVisible()){requestFarmCheckpoint();throw checkpointError();}return document.querySelector('#seed-dialog')?.open;},2200);
+        }
+        if(!opened)throw Error(t('seedDialogMissing'));
+        const option=[...document.querySelectorAll('#seed-list [data-seed-id]')].find(node=>node.dataset.seedId===seed&&!node.disabled);
+        if(!option){document.querySelector('#seed-dialog')?.close();throw Error(t('seedUnavailable'));}
+        option.click();
+        const completed=await waitFor(async()=>{const data=await api('/api/bootstrap');const farm=data.farm||data;const found=(farm.crops||[]).some(crop=>Number(crop.plot_index)===plot&&crop.seed_id===seed);if(found){state.farm=farm;state.offset=Number(farm.server_now||Date.now())-Date.now();}return found;},10000,650);
+        if(!completed)throw Error(t('plantUnverified'));refreshOpenWindows();
+    }
+    async function runtimeHarvest(crop){
+        await selectRuntimePlot(Number(crop.plot_index));await wait(100);const action=document.querySelector('#farm-primary-action');if(!action)throw Error(t('fieldActionMissing'));action.click();
+        const completed=await waitFor(async()=>{if(checkpointVisible()){requestFarmCheckpoint();throw checkpointError();}const data=await api('/api/bootstrap');const farm=data.farm||data;const gone=!(farm.crops||[]).some(item=>item.crop_id===crop.crop_id);if(gone){state.farm=farm;state.offset=Number(farm.server_now||Date.now())-Date.now();}return gone;},10000,650);
+        if(!completed)throw Error(t('harvestUnverified'));await wait(1200);refreshOpenWindows();
+    }
+    async function plant(seed,plot){
+        if(state.busy)return false;state.busy=true;
+        try{
+            if(state.mod2){try{log(t('plantAttempt',{plot,seed:seedInfo(seed)?.name||seed}),'info');await runtimePlant(seed,plot);log(`(Mod 2) ${t('plantDone',{plot,seed:seedInfo(seed)?.name||seed})}`);return true;}catch(error){if(isCheckpointError(error)||!state.mod2Fallback)throw error;log(t('fallbackLog',{error:error.message}),'warn');}}
+            await api('/api/farm/plant',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idempotency_key:crypto.randomUUID(),seed_id:seed,plot_index:plot})});await load();log(t('plantDone',{plot,seed:seedInfo(seed)?.name||seed}));return true;
+        }catch(error){if(!isCheckpointError(error))log(t('plantFailed',{error:error.message}),'bad');if(!state.checkpointPending)await load();return false;}finally{state.busy=false;}
+    }
+    async function harvest(crop){
+        if(state.busy||!crop)return false;state.busy=true;
+        try{
+            if(state.mod2){try{log(t('harvestAttempt',{plot:crop.plot_index}),'info');await runtimeHarvest(crop);log(`(Mod 2) ${t('harvested',{name:itemName(crop)})}`);return true;}catch(error){if(isCheckpointError(error)||!state.mod2Fallback)throw error;log(t('fallbackLog',{error:error.message}),'warn');}}
+            const result=await api('/api/farm/harvest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idempotency_key:crypto.randomUUID(),crop_id:crop.crop_id})});log(`${t('harvested',{name:itemName(crop)})} +${result.harvested?.point_value||0} Harvest Pts.`);await load();return true;
+        }catch(error){if(!isCheckpointError(error))log(t('harvestFailed',{error:error.message}),'bad');return false;}finally{state.busy=false;}
+    }
+    async function fulfill(order){
+        if(state.busy||!order||!order.ready)return false;state.busy=true;
+        try{const result=await api('/api/orders/fulfill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idempotency_key:crypto.randomUUID(),order_id:order.order_id})});log(t('orderDone',{name:order.title||order.order_id,coins:result.fulfilled?.total_coins||0}));await load();return true;}catch(error){if(!isCheckpointError(error))log(t('orderFailed',{error:error.message}),'bad');return false;}finally{state.busy=false;}
+    }
+    function orderSeedPlan(){
+        if(!state.autoOrders)return {};
+        const order=(state.farm?.orders||[]).find(entry=>!entry.ready&&(entry.requirements||[]).every(req=>Number(ownedSeed(req.seed_id)?.quantity||0)>0));if(!order)return {};
+        const plan={};for(const req of order.requirements||[]){const growing=plantedCopies(req.seed_id);const missing=Math.max(0,Number(req.quantity||0)-inventoryQty(req.seed_id)-growing);if(missing>0)plan[req.seed_id]=missing;}return plan;
+    }
+    function chooseSeedForPlot(plot,orderPlan){
+        for(const [seed,count] of Object.entries(orderPlan)){if(count>0&&freeCopies(seed)>0){orderPlan[seed]-=1;return seed;}}
+        if(state.autoPlots.has(plot))return [...ownedSeeds()].filter(seed=>freeCopies(seed.seed_id||seed.id)>0).sort((left,right)=>freeCopies(right.seed_id||right.id)-freeCopies(left.seed_id||left.id)||Number(seedInfo(left.seed_id||left.id)?.grow_seconds||Infinity)-Number(seedInfo(right.seed_id||right.id)?.grow_seconds||Infinity))[0]?.seed_id||[...ownedSeeds()].find(seed=>freeCopies(seed.id)>0)?.id||null;
+        const selected=state.plotSeeds[plot];return selected&&freeCopies(selected)>0?selected:null;
+    }
+    async function plantEmptyPlots(){
+        const plan=orderSeedPlan();
+        for(let plot=1;plot<=capacity();plot++){
+            if(crops().some(crop=>Number(crop.plot_index)===plot))continue;
+            const seed=chooseSeedForPlot(plot,plan);if(!seed)continue;
+            await plant(seed,plot);await wait(500);
+        }
+    }
+    async function runtimeSell(item,quantity){
+        const id=item.seed_id||item.id;const before=Number(item.fresh_quantity??item.quantity??0);
+        const sellDialog=document.querySelector('#sell-dialog');if(sellDialog?.open)sellDialog.close();
+        let button=document.querySelector(`#inventory-list [data-sell-seed="${CSS.escape(id)}"]`);
+        if(!button){document.querySelector('#view-full-inventory')?.click();await waitFor(()=>document.querySelector('#inventory-dialog')?.open,1800);button=document.querySelector(`#full-inventory-list [data-sell-seed="${CSS.escape(id)}"]`);}
+        if(!button||button.disabled)throw Error(t('saleButtonMissing'));button.click();
+        if(!await waitFor(()=>{if(checkpointVisible()){requestFarmCheckpoint();throw checkpointError();}return document.querySelector('#sell-dialog')?.open;},2500))throw Error(t('saleDialogMissing'));
+        if(checkpointVisible()){requestFarmCheckpoint();throw checkpointError();}
+        const input=document.querySelector('#sell-quantity');const confirm=document.querySelector('#confirm-sale');if(!input||!confirm)throw Error(t('saleControlsMissing'));
+        const wanted=Math.max(1,Math.min(before,quantity));
+        if(wanted!==1){
+            if(!await waitFor(()=>!confirm.disabled,7000))throw Error(t('salePreviewMissing'));
+            input.value=String(wanted);input.dispatchEvent(new Event('input',{bubbles:true}));
+        }
+        if(!await waitFor(()=>!confirm.disabled,9000))throw Error(t('salePreviewMissing'));confirm.click();
+        const completed=await waitFor(async()=>{if(checkpointVisible()){requestFarmCheckpoint();throw checkpointError();}const data=await api('/api/bootstrap');const farm=data.farm||data;const current=Number((farm.inventory||[]).find(entry=>entry.seed_id===id)?.fresh_quantity||0);if(current<before){state.farm=farm;state.homestead=data.homestead||state.homestead;state.offset=Number(farm.server_now||Date.now())-Date.now();return true;}return false;},9000,650);
+        if(!completed)throw Error(t('saleUnverified'));await wait(900);refreshOpenWindows();
+    }
+    function readyTree(){
+        const serverNow=Date.now()+state.offset;return (state.homestead?.trees||[]).map((tree,index)=>({tree,index})).find(({tree})=>tree.pausedMs===undefined&&Number(tree.level||0)>1&&(tree.ready===true||Number(tree.readyAt||tree.ready_at||Infinity)<=serverNow));
+    }
+    async function runtimeTreeHarvest(entry){
+        const card=document.querySelector(`[data-building="tree-${entry.index}"]`);if(!card)throw Error(t('treeCardMissing'));card.click();
+        if(!await waitFor(()=>{if(checkpointVisible()){requestFarmCheckpoint();throw checkpointError();}return document.querySelector('.homestead-dialog')?.open;},2200))throw Error(t('homesteadDialogMissing'));
+        const action=document.querySelector('.homestead-dialog [data-homestead-action="tree-harvest"]');if(!action||action.disabled)throw Error(t('treeActionMissing'));action.click();
+        const completed=await waitFor(async()=>{if(checkpointVisible()){requestFarmCheckpoint();throw checkpointError();}const data=await api('/api/bootstrap');const next=data.homestead?.trees?.[entry.index];const offset=Number(data.farm?.server_now||Date.now())-Date.now();if(next&&next.ready!==true&&Number(next.readyAt||next.ready_at||0)>Date.now()+offset){state.farm=data.farm;state.homestead=data.homestead;state.offset=offset;return true;}return false;},9000,700);
+        if(!completed)throw Error(t('treeUnverified'));refreshOpenWindows();
+    }
+    async function harvestTree(entry){
+        if(state.busy||!entry)return false;state.busy=true;
+        try{
+            const name=entry.tree.name||entry.tree.fruit||`Tree ${entry.index+1}`;
+            if(state.mod2){try{log(t('treeAttempt',{name}),'info');await runtimeTreeHarvest(entry);log(t('treeHarvest',{name}));return true;}catch(error){if(isCheckpointError(error)||!state.mod2Fallback)throw error;log(t('fallbackLog',{error:error.message}),'warn');}}
+            const result=await api('/api/homestead/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'tree-harvest',building:`tree-${entry.index}`,tree_index:entry.index,placement:0,idempotency_key:crypto.randomUUID()})});log(t('treeHarvest',{name}));state.homestead=result.homestead||state.homestead;await load();return true;
+        }catch(error){if(!isCheckpointError(error))log(t('treeFailed',{error:error.message}),'bad');return false;}finally{state.busy=false;}
+    }
+    async function autoSell(){
+        if(state.busy)return false;state.busy=true;let sold=false;
+        try{for(const item of [...inventory()]){const id=item.seed_id||item.id;const quantity=Number(item.fresh_quantity??item.quantity??0);if((state.autoSell||state.selectedSell.has(id))&&quantity>0){if(state.mod2){try{log(t('saleAttempt',{name:itemName(item)}),'info');await runtimeSell(item,quantity);}catch(error){if(isCheckpointError(error)||!state.mod2Fallback)throw error;log(t('fallbackLog',{error:error.message}),'warn');await api('/api/farm/sell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idempotency_key:crypto.randomUUID(),seed_id:id,quantity})});}}else await api('/api/farm/sell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idempotency_key:crypto.randomUUID(),seed_id:id,quantity})});log(t('sold',{name:itemName(item),quantity}));sold=true;}}if(sold)await load();return sold;}catch(error){if(!isCheckpointError(error))log(t('saleFailed',{error:error.message}),'bad');return false;}finally{state.busy=false;}
+    }
+    async function runCycle(){
+        if(!state.running||state.busy||state.destroyed||state.checkpointPending)return;
+        if(Date.now()-state.lastLoadAt>60000)await load();
+        const readyOrder=state.autoOrders&&(state.farm?.orders||[]).find(order=>order.ready);if(readyOrder){await fulfill(readyOrder);return;}
+        const tree=readyTree();if(tree){await harvestTree(tree);return;}
+        const readyCrop=crops().find(isReady);if(readyCrop){await harvest(readyCrop);if(state.running)await plantEmptyPlots();return;}
+        await plantEmptyPlots();if(state.autoSell)await autoSell();
+    }
+    function scheduleCycle(delay=4500){clearTimeout(state.cycleTimer);state.cycleTimer=setTimeout(async()=>{await runCycle();if(!state.destroyed)scheduleCycle(4500);},delay);}
+
+    function openFaucetPopup(automatic=false){
+        if(automatic&&(!faucetIsReady()||state.faucetClaimPending))return;
+        if(document.getElementById(WINDOW_PREFIX+'earn'))renderWindow('earn');
+        if(state.faucetPopup&&!state.faucetPopup.closed){state.faucetPopup.focus();return;}
+        state.faucetClaimLogged=false;
+        state.faucetPopup=window.open('/faucet/?nexus_manual=1','nexusFaucetPay','popup=yes,width=610,height=570,resizable=yes,scrollbars=yes');
+        if(state.faucetPopup)log(automatic?t('autoOpened'):t('captchaWaiting'),'info');else log(t('popupBlocked'),'bad');
+    }
+    function retryFaucetPopup(){
+        if(state.faucetRetryTimer||state.destroyed||state.faucetClaimPending)return;
+        const shouldRetry=state.faucetArmed||!!(state.faucetPopup&&!state.faucetPopup.closed);
+        if(!shouldRetry)return;
+        try{if(state.faucetPopup&&!state.faucetPopup.closed)state.faucetPopup.close();}catch{}
+        state.faucetPopup=null;log(t('checkpointRetry'),'warn');
+        state.faucetRetryTimer=setTimeout(()=>{state.faucetRetryTimer=null;if(shouldRetry&&!state.destroyed&&faucetIsReady()&&!state.faucetClaimPending)openFaucetPopup(false);},1200);
+    }
+    function finishFaucetClaim(){
+        if(!state.faucetClaimLogged){state.faucetClaimLogged=true;log(t('claimed'),'ok');}
+        state.faucetClaimPending=false;state.faucetVerifiedAt=0;state.faucetConfirming=false;
+        clearTimeout(state.faucetRetryTimer);state.faucetRetryTimer=null;
+        try{if(state.faucetPopup&&!state.faucetPopup.closed)state.faucetPopup.close();}catch{}
+        state.faucetPopup=null;
+        state.faucetReadyKey=String(state.farm?.faucet?.next_claim_at||'claimed');
+        refreshOpenWindows();
+    }
+    async function confirmFaucetClaim(){
+        if(state.faucetConfirming||state.destroyed)return;
+        state.faucetConfirming=true;
+        const previousNextAt=Number(state.farm?.faucet?.next_claim_at||0);
+        try{
+            for(let attempt=0;attempt<15&&!state.destroyed;attempt++){
+                await wait(attempt?2000:800);
+                await load();
+                const nextAt=Number(state.farm?.faucet?.next_claim_at||0);
+                if(!faucetIsReady()||(nextAt>previousNextAt&&nextAt>Date.now()+state.offset)){
+                    finishFaucetClaim();return;
+                }
+            }
+            state.faucetClaimPending=false;state.faucetVerifiedAt=0;
+            if(state.faucetArmed&&faucetIsReady()&&!state.destroyed)retryFaucetPopup();
+        }finally{state.faucetConfirming=false;}
+    }
+    function onMessage(event){
+        if(event.origin!==location.origin)return;
+        if(event.data?.source==='nexus-farm-checkpoint'){
+            if(event.data.type==='opened'){playCaptchaAlarm();return;}
+            if(event.data.type==='telegram-captcha'){void sendCaptchaToPrivateTelegram(event.data.kind||'farm',String(event.data.site_key||''),event.source);return;}
+            if(event.data.type==='retry'){retryFarmCheckpoint();return;}
+            if(event.data.type==='challenge'){log(t('visualChallenge'),'info');return;}
+            if(event.data.type==='passed'){
+                clearTimeout(state.checkpointRetryTimer);state.checkpointRetryTimer=null;state.checkpointRetryCount=0;
+                try{if(state.checkpointPopup&&!state.checkpointPopup.closed)state.checkpointPopup.close();}catch{}
+                state.checkpointPopup=null;state.checkpointProbeAt=Date.now();
+                void confirmFarmCheckpoint();
+            }
+            return;
+        }
+        if(event.data?.source!=='nexus-faucet')return;
+        if(event.data.type==='opened'){playCaptchaAlarm();log(t('captchaWaiting'),'info');return;}
+        if(event.data.type==='telegram-captcha'){void sendCaptchaToPrivateTelegram(event.data.kind||'faucet',String(event.data.site_key||''),event.source);return;}
+        if(event.data.type==='retry'){retryFaucetPopup();return;}
+        if(event.data.type==='challenge'){log(t('visualChallenge'),'info');return;}
+        if(event.data.type==='verified'){
+            clearTimeout(state.faucetRetryTimer);state.faucetRetryTimer=null;
+            state.faucetClaimPending=true;state.faucetVerifiedAt=Date.now();
+            log(t('verified'),'ok');void confirmFaucetClaim();return;
+        }
+        if(event.data.type==='claimed'){finishFaucetClaim();return;}
+        log(t('captchaWaiting'),'info');
+    }
+    function tick(){
+        document.querySelectorAll('[data-at]').forEach(element=>element.textContent=formatLeft(element.dataset.at));
+        document.querySelectorAll('[data-faucet-at]').forEach(element=>element.textContent=faucetIsReady()?t('ready'):formatLeft(element.dataset.faucetAt));
+        if(state.checkpointPopup&&!state.checkpointPopup.closed&&popupWasRedirected(state.checkpointPopup))retryFarmCheckpoint();
+        if(state.faucetPopup&&!state.faucetPopup.closed&&!state.faucetClaimPending&&popupWasRedirected(state.faucetPopup))retryFaucetPopup();
+        if(checkpointVisible()&&!state.checkpointPending)requestFarmCheckpoint();
+        if(state.checkpointPending&&!state.checkpointConfirming&&!state.checkpointRetryTimer&&(!state.checkpointPopup||state.checkpointPopup.closed)&&Date.now()>=state.checkpointProbeAt){state.checkpointProbeAt=Date.now()+15000;void confirmFarmCheckpoint();}
+        if(state.faucetArmed&&faucetIsReady()&&!state.faucetClaimPending){
+            const key=String(state.farm?.faucet?.next_claim_at||'ready');
+            if(state.faucetReadyKey!==key){state.faucetReadyKey=key;openFaucetPopup(true);}
+        }else if(!faucetIsReady())state.faucetReadyKey='';
+    }
+    function destroy(){
+        state.destroyed=true;clearTimeout(state.cycleTimer);clearTimeout(state.faucetRetryTimer);clearTimeout(state.checkpointRetryTimer);telegramCaptchaPollers.forEach(clearTimeout);telegramCaptchaPollers.clear();timers.forEach(clearInterval);timers.clear();window.removeEventListener('message',onMessage);
+        document.querySelectorAll(`#${ROOT_ID},#${LAUNCHER_ID},#${STYLE_ID},[id^="${WINDOW_PREFIX}"]`).forEach(node=>node.remove());
+        if(window[INSTANCE_KEY]?.destroy===destroy)delete window[INSTANCE_KEY];
+    }
+
+    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.0'};load();scheduleCycle(1200);
+})();

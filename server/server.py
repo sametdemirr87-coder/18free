@@ -6,9 +6,11 @@ import json
 import secrets
 import time
 from datetime import datetime, timezone
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
@@ -62,6 +64,7 @@ RUNTIME_STATE: dict[str, Any] = {
         "licenses": [],
         "bot_bundle": {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""},
         "settings": {"heartbeat_seconds": 30, "bind_mode": "first_account"},
+        "telegram_captchas": {},
     },
     LIGHTNING_APP_KEY: {
         "licenses": [],
@@ -857,6 +860,177 @@ def cryptocrops_script_update(script_id: str, client_id: str) -> Response:
     return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-store"})
 
 
+def telegram_api_call(token: str, method: str, payload: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    token = str(token or "").strip()
+    if not token:
+        return False, {"error": "Telegram bot token bos"}
+    try:
+        req = urlrequest.Request(
+            f"https://api.telegram.org/bot{token}/{method}",
+            data=json.dumps(payload or {}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlrequest.urlopen(req, timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+        return bool(data.get("ok")), data
+    except (urlerror.HTTPError, urlerror.URLError) as exc:
+        return False, {"error": str(exc)}
+    except Exception as exc:
+        return False, {"error": str(exc)}
+
+
+def require_cryptocrops_runtime(payload: dict[str, Any]) -> dict[str, Any]:
+    lic = find_license_by_session(str(payload.get("token") or ""), CROPCROPS_APP_KEY)
+    if not lic or lic.get("active") is False or lic.get("tamper_detected"):
+        raise HTTPException(status_code=403, detail="Oturum gecersiz")
+    binding_error = validate_runtime_binding(
+        lic,
+        str(payload.get("client_id") or ""),
+        str(payload.get("script_id") or ""),
+        str(payload.get("account_id") or ""),
+    )
+    if binding_error:
+        raise HTTPException(status_code=403, detail=binding_error)
+    return lic
+
+
+def cleanup_cryptocrops_captchas() -> dict[str, Any]:
+    sessions = app_state(CROPCROPS_APP_KEY).setdefault("telegram_captchas", {})
+    cutoff = time.time() - 900
+    for captcha_id, session in list(sessions.items()):
+        if float((session or {}).get("created_epoch") or 0) < cutoff:
+            sessions.pop(captcha_id, None)
+    while len(sessions) > 30:
+        oldest = min(sessions, key=lambda key: float((sessions.get(key) or {}).get("created_epoch") or 0))
+        sessions.pop(oldest, None)
+    return sessions
+
+
+@app.post("/cryptocrops/api/telegram/register")
+def cryptocrops_telegram_register(payload: dict[str, Any]) -> dict[str, Any]:
+    lic = require_cryptocrops_runtime(payload)
+    bot_token = str(payload.get("telegram_token") or "").strip()
+    chat_id = str(payload.get("telegram_chat_id") or "").strip()
+    if not bot_token and not chat_id:
+        lic["telegram_token"] = ""
+        lic["telegram_chat_id"] = ""
+        lic["telegram_bot_username"] = ""
+        save_state(force=True)
+        return {"success": True, "configured": False}
+    if not bot_token or not chat_id:
+        raise HTTPException(status_code=400, detail="Bot token ve Chat ID birlikte gerekli")
+    ok, me = telegram_api_call(bot_token, "getMe", {})
+    if not ok:
+        raise HTTPException(status_code=400, detail="Telegram bot token gecersiz")
+    ok, chat = telegram_api_call(bot_token, "getChat", {"chat_id": chat_id})
+    chat_row = chat.get("result") if isinstance(chat, dict) else {}
+    if not ok or not isinstance(chat_row, dict):
+        raise HTTPException(status_code=400, detail="Ozel sohbet bulunamadi; bota once /start gonder")
+    if str(chat_row.get("type") or "").lower() != "private":
+        raise HTTPException(status_code=400, detail="Sadece ozel Telegram sohbeti kabul edilir; grup ve kanal yasak")
+    if str(chat_row.get("id") or "") != chat_id:
+        raise HTTPException(status_code=400, detail="Chat ID dogrulanamadi")
+    lic["telegram_token"] = bot_token
+    lic["telegram_chat_id"] = chat_id
+    lic["telegram_bot_username"] = str((me.get("result") or {}).get("username") or "")
+    lic["telegram_connected_at"] = utc_now()
+    save_state(force=True)
+    telegram_api_call(bot_token, "sendMessage", {
+        "chat_id": chat_id,
+        "text": "✅ Nexus CryptoCrops baglandi. CAPTCHA bildirimleri yalnizca bu ozel sohbete gelecek.",
+    })
+    return {"success": True, "configured": True, "bot_username": lic["telegram_bot_username"]}
+
+
+@app.post("/cryptocrops/api/telegram/captcha/create")
+def cryptocrops_telegram_captcha_create(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    lic = require_cryptocrops_runtime(payload)
+    bot_token = str(lic.get("telegram_token") or "").strip()
+    chat_id = str(lic.get("telegram_chat_id") or "").strip()
+    if not bot_token or not chat_id:
+        raise HTTPException(status_code=400, detail="Telegram ayarlanmamis")
+    site_key = str(payload.get("site_key") or "").strip()
+    if not site_key or len(site_key) > 180 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for ch in site_key):
+        raise HTTPException(status_code=400, detail="hCaptcha site key gecersiz")
+    captcha_id = "cc_" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
+    sessions = cleanup_cryptocrops_captchas()
+    solve_url = str(request.base_url).rstrip("/") + f"/cryptocrops/telegram/captcha/{captcha_id}"
+    session = {
+        "captcha_id": captcha_id,
+        "license_id": str(lic.get("id") or ""),
+        "site_key": site_key,
+        "kind": str(payload.get("kind") or "captcha")[:40],
+        "page_url": str(payload.get("page_url") or "")[:500],
+        "status": "waiting",
+        "captcha_token": "",
+        "created_at": utc_now(),
+        "created_epoch": time.time(),
+        "telegram_message_id": "",
+    }
+    sessions[captcha_id] = session
+    save_state(force=True)
+    ok, sent = telegram_api_call(bot_token, "sendMessage", {
+        "chat_id": chat_id,
+        "text": "🚨 CryptoCrops CAPTCHA acildi. Asagidaki butondan dogrulamayi tamamla.",
+        "reply_markup": {"inline_keyboard": [[{"text": "🧩 CAPTCHA COZ", "url": solve_url}]]},
+        "disable_web_page_preview": True,
+    })
+    if not ok:
+        sessions.pop(captcha_id, None)
+        save_state(force=True)
+        raise HTTPException(status_code=400, detail="Telegram mesaji gonderilemedi")
+    session["telegram_message_id"] = str((sent.get("result") or {}).get("message_id") or "")
+    save_state(force=True)
+    return {"success": True, "captcha_id": captcha_id, "poll_ms": 1800}
+
+
+@app.get("/cryptocrops/api/telegram/captcha/status")
+def cryptocrops_telegram_captcha_status(token: str, captcha_id: str, client_id: str = "", script_id: str = "", account_id: str = "") -> dict[str, Any]:
+    lic = require_cryptocrops_runtime({"token": token, "client_id": client_id, "script_id": script_id, "account_id": account_id})
+    session = cleanup_cryptocrops_captchas().get(str(captcha_id or "")) or {}
+    if not session or str(session.get("license_id") or "") != str(lic.get("id") or ""):
+        raise HTTPException(status_code=404, detail="CAPTCHA oturumu bulunamadi")
+    solved = session.get("status") == "solved" and bool(session.get("captcha_token"))
+    if solved:
+        session["status"] = "consumed"
+        save_state(force=True)
+    return {"success": True, "status": "solved" if solved else session.get("status", "waiting"), "solved": solved, "captcha_token": session.get("captcha_token", "") if solved else ""}
+
+
+@app.post("/cryptocrops/api/telegram/captcha/solve")
+def cryptocrops_telegram_captcha_solve(payload: dict[str, Any]) -> dict[str, Any]:
+    captcha_id = str(payload.get("captcha_id") or "").strip()
+    captcha_token = str(payload.get("captcha_token") or "").strip()
+    session = cleanup_cryptocrops_captchas().get(captcha_id) or {}
+    if not session:
+        raise HTTPException(status_code=404, detail="CAPTCHA oturumu bulunamadi")
+    if len(captcha_token) < 20:
+        raise HTTPException(status_code=400, detail="CAPTCHA token gecersiz")
+    if session.get("status") not in {"waiting", "solved"}:
+        raise HTTPException(status_code=410, detail="CAPTCHA oturumu kapandi")
+    session["captcha_token"] = captcha_token
+    session["status"] = "solved"
+    session["solved_at"] = utc_now()
+    lic = find_license_by_id(str(session.get("license_id") or ""), CROPCROPS_APP_KEY) or {}
+    message_id = str(session.get("telegram_message_id") or "")
+    if message_id and lic.get("telegram_token") and lic.get("telegram_chat_id"):
+        telegram_api_call(str(lic["telegram_token"]), "deleteMessage", {"chat_id": str(lic["telegram_chat_id"]), "message_id": message_id})
+    save_state(force=True)
+    return {"success": True}
+
+
+@app.get("/cryptocrops/telegram/captcha/{captcha_id}")
+def cryptocrops_telegram_captcha_page(captcha_id: str) -> Response:
+    session = cleanup_cryptocrops_captchas().get(str(captcha_id or "")) or {}
+    if not session or session.get("status") != "waiting":
+        return Response("<h3>Bu CAPTCHA oturumu kapandi.</h3>", status_code=410, media_type="text/html")
+    site_key = str(session.get("site_key") or "")
+    safe_id = "".join(ch for ch in str(captcha_id) if ch.isalnum() or ch in "-_")
+    html = f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexus CryptoCrops CAPTCHA</title><script src="https://js.hcaptcha.com/1/api.js" async defer></script><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#07150d;color:#f4f8ee;font-family:Segoe UI,Arial}}.box{{width:min(92vw,460px);padding:28px;border:1px solid #4e7b5d;border-radius:22px;background:#10291b;text-align:center;box-shadow:0 24px 80px #0008}}h2{{color:#f3d26a}}#status{{color:#b8d4c0;margin:14px 0}}</style></head><body><div class="box"><h2>Nexus CryptoCrops</h2><p id="status">CAPTCHA dogrulamasini tamamla.</p><div class="h-captcha" data-sitekey="{site_key}" data-theme="dark" data-callback="done"></div></div><script>async function done(token){{const s=document.getElementById('status');s.textContent='Dogrulama gonderiliyor...';try{{const r=await fetch('/cryptocrops/api/telegram/captcha/solve',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{captcha_id:'{safe_id}',captcha_token:token}})}});if(!r.ok)throw 0;s.textContent='✅ Tamamlandi. Telegrama veya oyuna donebilirsin.';s.style.color='#76ef9b';}}catch(e){{s.textContent='⚠️ Gonderilemedi, tekrar dene.';s.style.color='#ffb36b';}}}}</script></body></html>'''
+    return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
+
+
 def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:
     ensure_shapes()
     state = app_state(app_key)
@@ -1149,6 +1323,7 @@ def ensure_shapes() -> None:
         RUNTIME_STATE[app_key].setdefault("bot_bundle", {"name": "", "content": "", "hash": "", "version": 0, "updated_at": ""})
         RUNTIME_STATE[app_key].setdefault("settings", {"heartbeat_seconds": 30, "bind_mode": "first_account"})
     RUNTIME_STATE[CROPCROPS_APP_KEY].setdefault("script_packages", {})
+    RUNTIME_STATE[CROPCROPS_APP_KEY].setdefault("telegram_captchas", {})
     RUNTIME_STATE[LIGHTNING_APP_KEY].setdefault("script_packages", {})
     for state in (RUNTIME_STATE, RUNTIME_STATE[FLASH_APP_KEY], RUNTIME_STATE[AZTLACOIN_APP_KEY], RUNTIME_STATE[CROPCROPS_APP_KEY], RUNTIME_STATE[LIGHTNING_APP_KEY]):
         for lic in state.get("licenses") or []:
@@ -1164,6 +1339,9 @@ def ensure_shapes() -> None:
             lic.setdefault("tamper_reason", "")
             lic.setdefault("tamper_at", "")
             lic.setdefault("tamper_report", {})
+            lic.setdefault("telegram_token", "")
+            lic.setdefault("telegram_chat_id", "")
+            lic.setdefault("telegram_bot_username", "")
 
 
 def find_license_by_key(key: str | None, app_key: str = "minerbyts") -> dict[str, Any] | None:

@@ -89,6 +89,12 @@ async function localApi(request, env) {
   if (request.method === 'GET' && path === '/health') return health(env, app);
   if (request.method === 'POST' && path === '/api/auth') return auth(request, env, app);
   if (request.method === 'POST' && path === '/api/heartbeat') return heartbeat(request, env, app);
+  if (app === 'cryptocrops' && request.method === 'POST' && path === '/api/telegram/register') return telegramRegister(request, env);
+  if (app === 'cryptocrops' && request.method === 'POST' && path === '/api/telegram/captcha/create') return telegramCaptchaCreate(request, env);
+  if (app === 'cryptocrops' && request.method === 'GET' && path === '/api/telegram/captcha/status') return telegramCaptchaStatus(request, env);
+  if (app === 'cryptocrops' && request.method === 'POST' && path === '/api/telegram/captcha/solve') return telegramCaptchaSolve(request, env);
+  const telegramCaptchaMatch = app === 'cryptocrops' && path.match(/^\/telegram\/captcha\/([A-Za-z0-9_-]+)$/);
+  if (request.method === 'GET' && telegramCaptchaMatch) return telegramCaptchaPage(env, telegramCaptchaMatch[1]);
   if (request.method === 'POST' && path === '/api/tamper/report') return tamper(request, env, app);
   if (request.method === 'GET' && path === '/api/tamper/report.gif') return tamperGif(request, env, app);
   if (request.method === 'GET' && path === '/api/bot/bundle') return botBundle(request, env, app);
@@ -148,6 +154,108 @@ async function heartbeat(request, env, app) {
   const binding = validateBinding(lic, body);
   if (binding) return json({ success: false, error: binding });
   return json({ success: true, server_time: now(), settings: s.settings });
+}
+
+function requireCryptoRuntime(state, body) {
+  const s = appState(state, 'cryptocrops');
+  const lic = s.licenses.find(x => x.session_token && x.session_token === String(body.token || ''));
+  if (!lic || lic.active === false || lic.tamper_detected) throw new HttpError(403, 'Oturum gecersiz');
+  const binding = validateBinding(lic, body);
+  if (binding) throw new HttpError(403, binding);
+  return lic;
+}
+
+async function telegramApi(token, method, payload) {
+  token = String(token || '').trim();
+  if (!token) return { ok:false, error:'Telegram bot token bos' };
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/${method}`, {
+      method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(payload || {})
+    });
+    const data = await response.json().catch(() => ({}));
+    return { ok:response.ok && data.ok === true, data };
+  } catch (error) {
+    return { ok:false, error:String(error && error.message || error) };
+  }
+}
+
+function cleanupTelegramCaptchas(state) {
+  const s = appState(state, 'cryptocrops');
+  s.telegram_captchas ||= {};
+  const cutoff = Date.now() - 15 * 60 * 1000;
+  for (const [id, session] of Object.entries(s.telegram_captchas)) {
+    if (Number(session && session.created_epoch || 0) < cutoff) delete s.telegram_captchas[id];
+  }
+  const ids = Object.keys(s.telegram_captchas);
+  if (ids.length > 30) ids.sort((a,b) => Number(s.telegram_captchas[a].created_epoch || 0) - Number(s.telegram_captchas[b].created_epoch || 0)).slice(0, ids.length - 30).forEach(id => delete s.telegram_captchas[id]);
+  return s.telegram_captchas;
+}
+
+async function telegramRegister(request, env) {
+  const body = await bodyJson(request); const state = await loadState(env); const lic = requireCryptoRuntime(state, body);
+  const token = String(body.telegram_token || '').trim(), chatId = String(body.telegram_chat_id || '').trim();
+  if (!token && !chatId) {
+    Object.assign(lic, { telegram_token:'', telegram_chat_id:'', telegram_bot_username:'' });
+    await saveState(env, state); return json({ success:true, configured:false });
+  }
+  if (!token || !chatId) return json({ success:false, error:'Bot token ve Chat ID birlikte gerekli' }, 400);
+  const me = await telegramApi(token, 'getMe', {});
+  if (!me.ok) return json({ success:false, error:'Telegram bot token gecersiz' }, 400);
+  const chat = await telegramApi(token, 'getChat', { chat_id:chatId });
+  const chatRow = chat.data && chat.data.result || {};
+  if (!chat.ok || !chatRow.id) return json({ success:false, error:'Ozel sohbet bulunamadi; bota once /start gonder' }, 400);
+  if (String(chatRow.type || '').toLowerCase() !== 'private') return json({ success:false, error:'Sadece ozel Telegram sohbeti kabul edilir; grup ve kanal yasak' }, 400);
+  if (String(chatRow.id) !== chatId) return json({ success:false, error:'Chat ID dogrulanamadi' }, 400);
+  Object.assign(lic, { telegram_token:token, telegram_chat_id:chatId, telegram_bot_username:String(me.data && me.data.result && me.data.result.username || ''), telegram_connected_at:now() });
+  await saveState(env, state);
+  await telegramApi(token, 'sendMessage', { chat_id:chatId, text:'✅ Nexus CryptoCrops baglandi. CAPTCHA bildirimleri yalnizca bu ozel sohbete gelecek.' });
+  return json({ success:true, configured:true, bot_username:lic.telegram_bot_username });
+}
+
+async function telegramCaptchaCreate(request, env) {
+  const body = await bodyJson(request); const state = await loadState(env); const lic = requireCryptoRuntime(state, body);
+  const token = String(lic.telegram_token || '').trim(), chatId = String(lic.telegram_chat_id || '').trim();
+  if (!token || !chatId) return json({ success:false, error:'Telegram ayarlanmamis' }, 400);
+  const siteKey = String(body.site_key || '').trim();
+  if (!siteKey || siteKey.length > 180 || !/^[A-Za-z0-9_-]+$/.test(siteKey)) return json({ success:false, error:'hCaptcha site key gecersiz' }, 400);
+  const captchaId = 'cc_' + randomToken().replace(/[^A-Za-z0-9]/g, '').slice(0, 26);
+  const sessions = cleanupTelegramCaptchas(state);
+  const incoming = new URL(request.url); const solveUrl = `${incoming.origin}/cryptocrops/telegram/captcha/${captchaId}`;
+  sessions[captchaId] = { captcha_id:captchaId, license_id:String(lic.id || ''), site_key:siteKey, kind:String(body.kind || 'captcha').slice(0,40), page_url:String(body.page_url || '').slice(0,500), status:'waiting', captcha_token:'', created_at:now(), created_epoch:Date.now(), telegram_message_id:'' };
+  await saveState(env, state);
+  const sent = await telegramApi(token, 'sendMessage', { chat_id:chatId, text:'🚨 CryptoCrops CAPTCHA acildi. Asagidaki butondan dogrulamayi tamamla.', reply_markup:{ inline_keyboard:[[{ text:'🧩 CAPTCHA COZ', url:solveUrl }]] }, disable_web_page_preview:true });
+  if (!sent.ok) { delete sessions[captchaId]; await saveState(env, state); return json({ success:false, error:'Telegram mesaji gonderilemedi' }, 400); }
+  sessions[captchaId].telegram_message_id = String(sent.data && sent.data.result && sent.data.result.message_id || '');
+  await saveState(env, state); return json({ success:true, captcha_id:captchaId, poll_ms:1800 });
+}
+
+async function telegramCaptchaStatus(request, env) {
+  const url = new URL(request.url); const body = Object.fromEntries(url.searchParams.entries()); const state = await loadState(env); const lic = requireCryptoRuntime(state, body);
+  const session = cleanupTelegramCaptchas(state)[String(body.captcha_id || '')] || {};
+  if (!session.captcha_id || String(session.license_id || '') !== String(lic.id || '')) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
+  const solved = session.status === 'solved' && !!session.captcha_token;
+  if (solved) { session.status = 'consumed'; await saveState(env, state); }
+  return json({ success:true, status:solved ? 'solved' : String(session.status || 'waiting'), solved, captcha_token:solved ? session.captcha_token : '' });
+}
+
+async function telegramCaptchaSolve(request, env) {
+  const body = await bodyJson(request); const state = await loadState(env); const sessions = cleanupTelegramCaptchas(state); const session = sessions[String(body.captcha_id || '')] || {};
+  const captchaToken = String(body.captcha_token || '').trim();
+  if (!session.captcha_id) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
+  if (captchaToken.length < 20) return json({ success:false, error:'CAPTCHA token gecersiz' }, 400);
+  if (!['waiting','solved'].includes(session.status)) return json({ success:false, error:'CAPTCHA oturumu kapandi' }, 410);
+  Object.assign(session, { captcha_token:captchaToken, status:'solved', solved_at:now() });
+  const lic = appState(state, 'cryptocrops').licenses.find(x => String(x.id || '') === String(session.license_id || '')) || {};
+  if (session.telegram_message_id && lic.telegram_token && lic.telegram_chat_id) await telegramApi(lic.telegram_token, 'deleteMessage', { chat_id:lic.telegram_chat_id, message_id:session.telegram_message_id });
+  await saveState(env, state); return json({ success:true });
+}
+
+async function telegramCaptchaPage(env, captchaId) {
+  const state = await loadState(env); const session = cleanupTelegramCaptchas(state)[String(captchaId || '')] || {};
+  if (!session.captcha_id || session.status !== 'waiting') return new Response('<h3>Bu CAPTCHA oturumu kapandi.</h3>', { status:410, headers:{ 'Content-Type':'text/html; charset=utf-8' } });
+  const siteKey = String(session.site_key || ''), safeId = String(captchaId || '').replace(/[^A-Za-z0-9_-]/g, '');
+  const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexus CryptoCrops CAPTCHA</title><script src="https://js.hcaptcha.com/1/api.js" async defer></script><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07150d;color:#f4f8ee;font-family:Segoe UI,Arial}.box{width:min(92vw,460px);padding:28px;border:1px solid #4e7b5d;border-radius:22px;background:#10291b;text-align:center;box-shadow:0 24px 80px #0008}h2{color:#f3d26a}#status{color:#b8d4c0;margin:14px 0}</style></head><body><div class="box"><h2>Nexus CryptoCrops</h2><p id="status">CAPTCHA dogrulamasini tamamla.</p><div class="h-captcha" data-sitekey="${siteKey}" data-theme="dark" data-callback="done"></div></div><script>async function done(token){const s=document.getElementById('status');s.textContent='Dogrulama gonderiliyor...';try{const r=await fetch('/cryptocrops/api/telegram/captcha/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({captcha_id:'${safeId}',captcha_token:token})});if(!r.ok)throw 0;s.textContent='✅ Tamamlandi. Telegrama veya oyuna donebilirsin.';s.style.color='#76ef9b';}catch(e){s.textContent='⚠️ Gonderilemedi, tekrar dene.';s.style.color='#ffb36b';}}</script></body></html>`;
+  return new Response(html, { headers:{ 'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store', ...CORS } });
 }
 
 async function botBundle(request, env, app) {
@@ -264,6 +372,7 @@ async function saveState(env, state) { await writeValue(env, KEYS.state, state);
 function ensureState(state) {
   state.project ||= 'minerbytsfree'; state.licenses ||= []; state.settings ||= { heartbeat_seconds:30, bind_mode:'first_account' };
   for (const app of APPS.slice(1)) { state[app] ||= {}; state[app].licenses ||= []; state[app].settings ||= { heartbeat_seconds:30, bind_mode:'first_account' }; }
+  state.cryptocrops.telegram_captchas ||= {};
 }
 function appState(state, app) { return app === 'minerbyts' ? state : state[app]; }
 
