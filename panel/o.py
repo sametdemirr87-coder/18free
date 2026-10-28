@@ -79,29 +79,32 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     // Capture the exact challenge/ticket already requested by CryptoCrops. The
     // Telegram bridge must reuse this official flow instead of creating a
     // second challenge and consuming the site's attempt limit.
-    if (!PAGE_WINDOW.__NEXUS_CRYPTOCROPS_FETCH_CAPTURE_V1__) {
-        PAGE_WINDOW.__NEXUS_CRYPTOCROPS_FETCH_CAPTURE_V1__ = true;
-        const nativeFetch = PAGE_WINDOW.fetch.bind(PAGE_WINDOW);
-        PAGE_WINDOW.fetch = async function(input, init) {
-            const href = typeof input === 'string' ? input : String(input && input.url || '');
-            let path = '';
-            try { path = new URL(href, location.href).pathname; } catch(e) {}
-            let requestBody = Promise.resolve({});
-            try {
-                if (typeof init?.body === 'string') requestBody = Promise.resolve(JSON.parse(init.body || '{}'));
-                else if (PAGE_WINDOW.Request && input instanceof PAGE_WINDOW.Request) requestBody = input.clone().json().catch(() => ({}));
-            } catch(e) {}
-            const response = await nativeFetch(input, init);
-            const kind = path.endsWith('/api/farm-checkpoint/challenge') ? 'farm'
-                : path.endsWith('/api/earn/faucet-challenge') ? 'faucet' : '';
-            if (kind && response.ok) {
-                Promise.all([response.clone().json().catch(() => ({})), requestBody]).then(([payload, request]) => {
-                    PAGE_WINDOW[CAPTCHA_FLOW_KEY] = { kind, payload, request, captured_at:Date.now() };
-                }).catch(() => {});
-            }
-            return response;
-        };
-    }
+    try {
+        const hook = document.createElement('script');
+        hook.textContent = `(()=>{
+            if(window.__NEXUS_CRYPTOCROPS_FETCH_CAPTURE_V1__)return;
+            window.__NEXUS_CRYPTOCROPS_FETCH_CAPTURE_V1__=true;
+            const FLOW_KEY='__NEXUS_CRYPTOCROPS_CAPTURED_FLOW_V1__';
+            const nativeFetch=window.fetch;
+            window.fetch=async function(input,init){
+                const href=typeof input==='string'?input:String(input&&input.url||'');
+                let path='';try{path=new URL(href,location.href).pathname;}catch(e){}
+                let requestBody=Promise.resolve({});
+                try{
+                    if(typeof init?.body==='string')requestBody=Promise.resolve(JSON.parse(init.body||'{}'));
+                    else if(input instanceof Request)requestBody=input.clone().json().catch(()=>({}));
+                }catch(e){}
+                const response=await nativeFetch.apply(this,arguments);
+                const kind=path.endsWith('/api/farm-checkpoint/challenge')?'farm':path.endsWith('/api/earn/faucet-challenge')?'faucet':'';
+                if(kind&&response.ok)Promise.all([response.clone().json().catch(()=>({})),requestBody]).then(([payload,request])=>{
+                    window[FLOW_KEY]={kind,payload,request,captured_at:Date.now()};
+                }).catch(()=>{});
+                return response;
+            };
+        })();`;
+        (document.documentElement || document.head)?.appendChild(hook);
+        hook.remove();
+    } catch(e) {}
 
     function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
