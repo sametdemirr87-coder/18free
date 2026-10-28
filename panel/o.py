@@ -41,8 +41,9 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        unsafeWindow
 // @connect      __SERVER_HOST__
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function() {
@@ -71,7 +72,36 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     let releaseEmbeddedBot = null;
     let telegramConfigured = false;
     const TELEGRAM_OWNER_KEY = 'nexus.cryptocrops.telegram.owner-client.v1';
+    const CAPTCHA_FLOW_KEY = '__NEXUS_CRYPTOCROPS_CAPTURED_FLOW_V1__';
+    const PAGE_WINDOW = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     globalThis.__NEXUS_CROPCROPS_ULTRA_START__ = new Promise((resolve) => { releaseEmbeddedBot = resolve; });
+
+    // Capture the exact challenge/ticket already requested by CryptoCrops. The
+    // Telegram bridge must reuse this official flow instead of creating a
+    // second challenge and consuming the site's attempt limit.
+    if (!PAGE_WINDOW.__NEXUS_CRYPTOCROPS_FETCH_CAPTURE_V1__) {
+        PAGE_WINDOW.__NEXUS_CRYPTOCROPS_FETCH_CAPTURE_V1__ = true;
+        const nativeFetch = PAGE_WINDOW.fetch.bind(PAGE_WINDOW);
+        PAGE_WINDOW.fetch = async function(input, init) {
+            const href = typeof input === 'string' ? input : String(input && input.url || '');
+            let path = '';
+            try { path = new URL(href, location.href).pathname; } catch(e) {}
+            let requestBody = Promise.resolve({});
+            try {
+                if (typeof init?.body === 'string') requestBody = Promise.resolve(JSON.parse(init.body || '{}'));
+                else if (PAGE_WINDOW.Request && input instanceof PAGE_WINDOW.Request) requestBody = input.clone().json().catch(() => ({}));
+            } catch(e) {}
+            const response = await nativeFetch(input, init);
+            const kind = path.endsWith('/api/farm-checkpoint/challenge') ? 'farm'
+                : path.endsWith('/api/earn/faucet-challenge') ? 'faucet' : '';
+            if (kind && response.ok) {
+                Promise.all([response.clone().json().catch(() => ({})), requestBody]).then(([payload, request]) => {
+                    PAGE_WINDOW[CAPTCHA_FLOW_KEY] = { kind, payload, request, captured_at:Date.now() };
+                }).catch(() => {});
+            }
+            return response;
+        };
+    }
 
     function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
@@ -525,7 +555,8 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
         showGate();
     }
 
-    boot();
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once:true });
+    else boot();
 })();
 
 __STATIC_BOT__

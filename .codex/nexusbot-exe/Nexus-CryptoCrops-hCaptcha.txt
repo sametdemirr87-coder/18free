@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus CryptoCrops Botrqssssssü
 // @namespace    nexus.cryptocrops.local
-// @version      0.9.4
+// @version      0.9.5
 // @match        https://cryptocrops.net/*
 // @match        https://*.hcaptcha.com/*hcaptcha-challenge*
 // @match        https://*.hcaptcha.com/*checkbox*
@@ -332,6 +332,18 @@
     }
     function clearCaptchaAnchor(){document.getElementById('nexus-captcha-anchor')?.remove();}
 
+    const CAPTCHA_FLOW_KEY='__NEXUS_CRYPTOCROPS_CAPTURED_FLOW_V1__';
+    const PAGE_WINDOW=typeof unsafeWindow!=='undefined'?unsafeWindow:window;
+    async function capturedCaptchaFlow(kind,timeout=8000){
+        const deadline=Date.now()+timeout;
+        while(Date.now()<deadline){
+            const flow=PAGE_WINDOW[CAPTCHA_FLOW_KEY];
+            if(flow&&flow.kind===kind&&Date.now()-Number(flow.captured_at||0)<120000)return flow;
+            await new Promise(resolve=>setTimeout(resolve,120));
+        }
+        return null;
+    }
+
     let captchaAlarmContext=null;
     let captchaAlarmPlaying=false;
     function primeCaptchaAlarm(){
@@ -412,7 +424,14 @@
         const previous=Number(telegramCaptchaDispatches.get(dispatchKey)||0);
         if(Date.now()-previous<15000)return;
         telegramCaptchaDispatches.set(dispatchKey,Date.now());
-        const created=await telegramServerRequest('POST','/api/telegram/captcha/create',{kind,site_key:siteKey,page_url:location.href});
+        let created=await telegramServerRequest('POST','/api/telegram/captcha/create',{kind,site_key:siteKey,page_url:location.href});
+        if(!created?.success&&/ayarlanmamis|not configured/i.test(String(created?.error||''))){
+            const repaired=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:settings.botToken,telegram_chat_id:settings.chatId});
+            if(repaired?.success){
+                log('Telegram sunucu kaydi otomatik yenilendi.','ok');
+                created=await telegramServerRequest('POST','/api/telegram/captcha/create',{kind,site_key:siteKey,page_url:location.href});
+            }
+        }
         if(!created?.success||!created.captcha_id){telegramCaptchaDispatches.delete(dispatchKey);log('Telegram CAPTCHA gonderilemedi: '+(created?.error||'bilinmeyen hata'),'bad');return;}
         log('CAPTCHA ozel Telegram sohbetine gonderildi.','info');
         const captchaId=created.captcha_id;let attempts=0;
@@ -469,7 +488,7 @@
         const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);return url.searchParams.get('sitekey')||url.searchParams.get('k')||'';}catch{return '';}};
         let telegramSent=false,officialFlow=null,flowPreparing=false,telegramApplying=false;
         const jsonRequest=async(url,options={})=>{const response=await fetch(url,options);let data={};try{data=await response.json();}catch{}if(!response.ok){const error=Error(data.message||data.error||('HTTP '+response.status));error.code=data.error||'';throw error;}return data;};
-        const prepareOfficialFlow=async()=>{if(officialFlow||flowPreparing)return officialFlow;flowPreparing=true;try{const payload=await jsonRequest('/api/earn/faucet-challenge',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const challengeId=String(payload.challenge?.challenge_id||''),ticket=String(payload.verification?.ticket||''),key=String(payload.captcha?.site_key||siteKey()||'');if(!challengeId||!ticket||!key)throw Error('Faucet guvenlik oturumu hazirlanamadi.');officialFlow={challengeId,ticket,siteKey:key};return officialFlow;}finally{flowPreparing=false;}};
+        const prepareOfficialFlow=async()=>{if(officialFlow||flowPreparing)return officialFlow;flowPreparing=true;try{const captured=await capturedCaptchaFlow('faucet');const payload=captured?.payload||{};const challengeId=String(payload.challenge?.challenge_id||''),ticket=String(payload.verification?.ticket||''),key=String(payload.captcha?.site_key||siteKey()||'');if(!challengeId||!ticket||!key)throw Error('Faucet resmi CAPTCHA oturumu yakalanamadi; popupi bir kez yeniden ac.');officialFlow={challengeId,ticket,siteKey:key};return officialFlow;}finally{flowPreparing=false;}};
         const applyTelegramToken=async data=>{if(data?.source!=='nexus-telegram-captcha'||data.type!=='token'||(data.client_id&&String(data.client_id)!==BRIDGE_CLIENT_ID)||telegramApplying)return;const token=String(data.captcha_token||'');if(token.length<20)return;telegramApplying=true;status('Telegram CAPTCHA cozumu alindi; resmi Faucet istegi gonderiliyor…');try{const flow=officialFlow||await prepareOfficialFlow();const result=await jsonRequest('/api/earn/faucet/collect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idempotency_key:crypto.randomUUID(),faucet_challenge:flow.challengeId,captcha_token:token,captcha_ticket:flow.ticket})});status('Faucet Pay basariyla alindi.');send('claimed','Faucet Pay basariyla alindi.',{claimed:result.claimed||null});clearInterval(id);clearCaptchaAnchor();try{window.opener?.focus();}catch{}setTimeout(()=>window.close(),700);}catch(error){status('Telegram cozumu islenemedi: '+error.message);send('retry','',{reason:error.message});}finally{telegramApplying=false;}};
         window.addEventListener('message',event=>{if(event.origin===location.origin)applyTelegramToken(event.data);});if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>applyTelegramToken(event.data);
         const id = setInterval(() => {
@@ -515,7 +534,7 @@
         const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);return url.searchParams.get('sitekey')||url.searchParams.get('k')||'';}catch{return '';}};
         let telegramSent=false,officialFlow=null,flowPreparing=false,telegramApplying=false;
         const jsonRequest=async(url,options={})=>{const response=await fetch(url,options);let data={};try{data=await response.json();}catch{}if(!response.ok){const error=Error(data.message||data.error||('HTTP '+response.status));error.code=data.error||'';throw error;}return data;};
-        const prepareOfficialFlow=async()=>{if(officialFlow||flowPreparing)return officialFlow;flowPreparing=true;try{const attemptId=crypto.randomUUID();const payload=await jsonRequest('/api/farm-checkpoint/challenge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({attempt_id:attemptId})});if(payload.verified&&!payload.checkpoint?.required){send('passed');return null;}const ticket=String(payload.captcha?.ticket||''),key=String(payload.captcha?.site_key||siteKey()||''),requiredSince=payload.checkpoint?.required_since;if(!ticket||!key||requiredSince==null)throw Error('Ciftlik guvenlik oturumu hazirlanamadi.');officialFlow={attemptId,ticket,siteKey:key,requiredSince};return officialFlow;}finally{flowPreparing=false;}};
+        const prepareOfficialFlow=async()=>{if(officialFlow||flowPreparing)return officialFlow;flowPreparing=true;try{const captured=await capturedCaptchaFlow('farm');const payload=captured?.payload||{},attemptId=String(captured?.request?.attempt_id||'');if(payload.verified&&!payload.checkpoint?.required){send('passed');return null;}const ticket=String(payload.captcha?.ticket||''),key=String(payload.captcha?.site_key||siteKey()||''),requiredSince=payload.checkpoint?.required_since;if(!attemptId||!ticket||!key||requiredSince==null)throw Error('Ciftlik resmi CAPTCHA oturumu yakalanamadi; popupi bir kez yeniden ac.');officialFlow={attemptId,ticket,siteKey:key,requiredSince};return officialFlow;}finally{flowPreparing=false;}};
         const applyTelegramToken=async data=>{if(data?.source!=='nexus-telegram-captcha'||data.type!=='token'||(data.client_id&&String(data.client_id)!==BRIDGE_CLIENT_ID)||telegramApplying)return;const token=String(data.captcha_token||'');if(token.length<20)return;telegramApplying=true;status('Telegram CAPTCHA cozumu alindi; resmi ciftlik dogrulamasi gonderiliyor…');try{const flow=officialFlow||await prepareOfficialFlow();if(!flow)return;const result=await jsonRequest('/api/farm-checkpoint/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({attempt_id:flow.attemptId,required_since:flow.requiredSince,captcha_token:token,captcha_ticket:flow.ticket})});if(!result.verified||result.checkpoint?.required)throw Error('Ciftlik dogrulamasi sunucuda onaylanmadi.');status('Ciftlik dogrulamasi tamamlandi; bot devam ediyor.');send('passed');clearInterval(id);clearCaptchaAnchor();try{window.opener?.focus();}catch{}setTimeout(()=>window.close(),600);}catch(error){status('Telegram cozumu islenemedi: '+error.message);send('retry',{reason:error.message});}finally{telegramApplying=false;}};
         window.addEventListener('message',event=>{if(event.origin===location.origin)applyTelegramToken(event.data);});if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>applyTelegramToken(event.data);
         const id=setInterval(()=>{
@@ -586,7 +605,7 @@
     function shell(){
         const panel = document.createElement('section'); panel.id = ROOT_ID;
         if(state.uiPos){ panel.style.left=`${state.uiPos.x}px`; panel.style.top=`${state.uiPos.y}px`; panel.style.right='auto'; }
-        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.4</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
+        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.5</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
         document.body.appendChild(panel);
         panel.querySelector('[data-close]').onclick=hideRoot;
         panel.querySelector('[data-window="settings"]').onclick=()=>toggleWindow('settings');
