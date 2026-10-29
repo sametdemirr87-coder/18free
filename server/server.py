@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from urllib import error as urlerror
 from urllib import request as urlrequest
+from urllib.parse import urlencode
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -957,7 +958,8 @@ def cryptocrops_telegram_captcha_create(payload: dict[str, Any], request: Reques
         raise HTTPException(status_code=400, detail="hCaptcha site key gecersiz")
     captcha_id = "cc_" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
     sessions = cleanup_cryptocrops_captchas()
-    solve_url = str(request.base_url).rstrip("/") + f"/cryptocrops/telegram/captcha/{captcha_id}"
+    client_id = str(payload.get("client_id") or "").strip()
+    solve_url = "https://cryptocrops.net/earn/?" + urlencode({"nexus_telegram": captcha_id, "nexus_client": client_id})
     session = {
         "captcha_id": captcha_id,
         "license_id": str(lic.get("id") or ""),
@@ -994,7 +996,7 @@ def cryptocrops_telegram_captcha_status(token: str, captcha_id: str, license_key
     if not session or str(session.get("license_id") or "") != str(lic.get("id") or ""):
         raise HTTPException(status_code=404, detail="CAPTCHA oturumu bulunamadi")
     solved = session.get("status") == "solved" and bool(session.get("captcha_token"))
-    return {"success": True, "status": "solved" if solved else session.get("status", "waiting"), "solved": solved, "captcha_token": session.get("captcha_token", "") if solved else ""}
+    return {"success": True, "status": "solved" if solved else session.get("status", "waiting"), "solved": solved, "captcha_token": session.get("captcha_token", "") if solved else "", "site_key": str(session.get("site_key") or ""), "kind": str(session.get("kind") or "captcha")}
 
 
 @app.post("/cryptocrops/api/telegram/captcha/ack")

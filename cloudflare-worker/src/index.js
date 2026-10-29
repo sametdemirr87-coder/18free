@@ -239,7 +239,8 @@ async function telegramCaptchaCreate(request, env) {
   if (!siteKey || siteKey.length > 180 || !/^[A-Za-z0-9_-]+$/.test(siteKey)) return json({ success:false, error:'hCaptcha site key gecersiz' }, 400);
   const captchaId = 'cc_' + randomToken().replace(/[^A-Za-z0-9]/g, '').slice(0, 26);
   const sessions = cleanupTelegramCaptchas(state);
-  const incoming = new URL(request.url); const solveUrl = `${incoming.origin}/cryptocrops/telegram/captcha/${captchaId}`;
+  const clientId = String(body.client_id || '').trim();
+  const solveUrl = `https://cryptocrops.net/earn/?nexus_telegram=${encodeURIComponent(captchaId)}&nexus_client=${encodeURIComponent(clientId)}`;
   sessions[captchaId] = { captcha_id:captchaId, license_id:String(lic.id || ''), site_key:siteKey, kind:String(body.kind || 'captcha').slice(0,40), page_url:String(body.page_url || '').slice(0,500), status:'waiting', captcha_token:'', created_at:now(), created_epoch:Date.now(), telegram_message_id:'' };
   await saveState(env, state);
   const sent = await telegramApi(token, 'sendMessage', { chat_id:chatId, text:'🚨 CryptoCrops CAPTCHA acildi. Asagidaki butondan dogrulamayi tamamla.', reply_markup:{ inline_keyboard:[[{ text:'🧩 CAPTCHA COZ', url:solveUrl }]] }, disable_web_page_preview:true });
@@ -253,7 +254,7 @@ async function telegramCaptchaStatus(request, env) {
   const session = cleanupTelegramCaptchas(state)[String(body.captcha_id || '')] || {};
   if (!session.captcha_id || String(session.license_id || '') !== String(lic.id || '')) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
   const solved = session.status === 'solved' && !!session.captcha_token;
-  return json({ success:true, status:solved ? 'solved' : String(session.status || 'waiting'), solved, captcha_token:solved ? session.captcha_token : '' }, 200, { 'Cache-Control':'no-store' });
+  return json({ success:true, status:solved ? 'solved' : String(session.status || 'waiting'), solved, captcha_token:solved ? session.captcha_token : '', site_key:String(session.site_key || ''), kind:String(session.kind || 'captcha') }, 200, { 'Cache-Control':'no-store' });
 }
 
 async function telegramCaptchaAck(request, env) {
