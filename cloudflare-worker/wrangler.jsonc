@@ -5,6 +5,8 @@
   "compatibility_date": "2026-10-27",
   "vars": {
     "PRIMARY_ORIGIN": "https://one8free.onrender.com",
-    "PROJECT_NAME": "minerbytsfree"
+    "PROJECT_NAME": "minerbytsfree",
+    "APP_NAME": "minerbytsfree-server",
+    "SUPABASE_URL": "https://tpuiiolikhywfouttbsk.supabase.co"
   }
 }
