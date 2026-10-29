@@ -1013,6 +1013,29 @@ def cryptocrops_telegram_captcha_ack(payload: dict[str, Any]) -> dict[str, Any]:
     return {"success": True}
 
 
+@app.post("/cryptocrops/api/telegram/captcha/retry")
+def cryptocrops_telegram_captcha_retry(payload: dict[str, Any]) -> dict[str, Any]:
+    lic = require_cryptocrops_runtime(payload)
+    session = cleanup_cryptocrops_captchas().get(str(payload.get("captcha_id") or "")) or {}
+    if not session or str(session.get("license_id") or "") != str(lic.get("id") or ""):
+        raise HTTPException(status_code=404, detail="CAPTCHA oturumu bulunamadi")
+    if session.get("status") == "consumed":
+        return {"success": True, "status": "consumed"}
+    session["status"] = "waiting"
+    session["captcha_token"] = ""
+    session["retry_at"] = utc_now()
+    save_state(force=True)
+    return {"success": True, "status": "waiting"}
+
+
+@app.get("/cryptocrops/api/telegram/captcha/progress/{captcha_id}")
+def cryptocrops_telegram_captcha_progress(captcha_id: str) -> dict[str, Any]:
+    session = cleanup_cryptocrops_captchas().get(str(captcha_id or "")) or {}
+    if not session:
+        raise HTTPException(status_code=404, detail="CAPTCHA oturumu bulunamadi")
+    return {"success": True, "status": str(session.get("status") or "waiting")}
+
+
 @app.post("/cryptocrops/api/telegram/captcha/solve")
 def cryptocrops_telegram_captcha_solve(payload: dict[str, Any]) -> dict[str, Any]:
     captcha_id = str(payload.get("captcha_id") or "").strip()
@@ -1022,15 +1045,13 @@ def cryptocrops_telegram_captcha_solve(payload: dict[str, Any]) -> dict[str, Any
         raise HTTPException(status_code=404, detail="CAPTCHA oturumu bulunamadi")
     if len(captcha_token) < 20:
         raise HTTPException(status_code=400, detail="CAPTCHA token gecersiz")
+    if session.get("status") == "consumed":
+        return {"success": True, "already_processed": True}
     if session.get("status") not in {"waiting", "solved"}:
         raise HTTPException(status_code=410, detail="CAPTCHA oturumu kapandi")
     session["captcha_token"] = captcha_token
     session["status"] = "solved"
     session["solved_at"] = utc_now()
-    lic = find_license_by_id(str(session.get("license_id") or ""), CROPCROPS_APP_KEY) or {}
-    message_id = str(session.get("telegram_message_id") or "")
-    if message_id and lic.get("telegram_token") and lic.get("telegram_chat_id"):
-        telegram_api_call(str(lic["telegram_token"]), "deleteMessage", {"chat_id": str(lic["telegram_chat_id"]), "message_id": message_id})
     save_state(force=True)
     return {"success": True}
 
@@ -1040,11 +1061,14 @@ def cryptocrops_telegram_captcha_page(captcha_id: str) -> Response:
     session = cleanup_cryptocrops_captchas().get(str(captcha_id or "")) or {}
     if not session:
         return Response("<h3>CAPTCHA oturumu bulunamadi.</h3>", status_code=404, media_type="text/html")
-    if session.get("status") != "waiting":
-        return Response("<h3>✅ CAPTCHA cozuldu. Bot sonucu oyuna isliyor.</h3>", status_code=200, media_type="text/html", headers={"Cache-Control": "no-store"})
+    if session.get("status") == "consumed":
+        return Response("<h3>✅ CAPTCHA tamamlandi. Bot devam ediyor.</h3>", status_code=200, media_type="text/html", headers={"Cache-Control": "no-store"})
     site_key = str(session.get("site_key") or "")
     safe_id = "".join(ch for ch in str(captcha_id) if ch.isalnum() or ch in "-_")
-    html = f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexus CryptoCrops CAPTCHA</title><script src="https://js.hcaptcha.com/1/api.js" async defer></script><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#07150d;color:#f4f8ee;font-family:Segoe UI,Arial}}.box{{width:min(92vw,460px);padding:28px;border:1px solid #4e7b5d;border-radius:22px;background:#10291b;text-align:center;box-shadow:0 24px 80px #0008}}h2{{color:#f3d26a}}#status{{color:#b8d4c0;margin:14px 0}}</style></head><body><div class="box"><h2>Nexus CryptoCrops</h2><p id="status">CAPTCHA dogrulamasini tamamla.</p><div class="h-captcha" data-sitekey="{site_key}" data-theme="dark" data-callback="done"></div></div><script>async function done(token){{const s=document.getElementById('status');s.textContent='Dogrulama gonderiliyor...';try{{const r=await fetch('/cryptocrops/api/telegram/captcha/solve',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{captcha_id:'{safe_id}',captcha_token:token}})}});if(!r.ok)throw 0;s.textContent='✅ Tamamlandi. Telegrama veya oyuna donebilirsin.';s.style.color='#76ef9b';}}catch(e){{s.textContent='⚠️ Gonderilemedi, tekrar dene.';s.style.color='#ffb36b';}}}}</script></body></html>'''
+    if session.get("status") == "solved":
+        waiting = f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexus CryptoCrops CAPTCHA</title><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#07150d;color:#76ef9b;font:600 18px Segoe UI,Arial;text-align:center}}</style></head><body><div>✅ Cozum alindi.<br>Bot oyuna isliyor...</div><script>const id='{safe_id}';setInterval(async()=>{{try{{const r=await fetch('/cryptocrops/api/telegram/captcha/progress/'+id,{{cache:'no-store'}}),d=await r.json();if(d.status==='waiting')location.reload();else if(d.status==='consumed')document.body.innerHTML='<div>✅ Tamamlandi. Bot devam ediyor.</div>';}}catch{{}}}},1800);</script></body></html>'''
+        return Response(waiting, media_type="text/html", headers={"Cache-Control": "no-store"})
+    html = f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexus CryptoCrops CAPTCHA</title><script src="https://js.hcaptcha.com/1/api.js" async defer></script><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#07150d;color:#f4f8ee;font-family:Segoe UI,Arial}}.box{{width:min(92vw,460px);padding:28px;border:1px solid #4e7b5d;border-radius:22px;background:#10291b;text-align:center;box-shadow:0 24px 80px #0008}}h2{{color:#f3d26a}}#status{{color:#b8d4c0;margin:14px 0}}</style></head><body><div class="box"><h2>Nexus CryptoCrops</h2><p id="status">CAPTCHA dogrulamasini tamamla.</p><div class="h-captcha" data-sitekey="{site_key}" data-theme="dark" data-callback="done"></div></div><script>const id='{safe_id}';let timer=0;const status=document.getElementById('status');async function progress(){{try{{const r=await fetch('/cryptocrops/api/telegram/captcha/progress/'+id,{{cache:'no-store'}}),d=await r.json();if(d.status==='consumed'){{clearInterval(timer);status.textContent='✅ Tamamlandi. Bot devam ediyor.';status.style.color='#76ef9b';}}else if(d.status==='waiting'){{clearInterval(timer);location.reload();}}}}catch{{}}}}async function done(token){{status.textContent='Dogrulama bota gonderiliyor...';try{{const r=await fetch('/cryptocrops/api/telegram/captcha/solve',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{captcha_id:id,captcha_token:token}})}}),d=await r.json();if(!r.ok)throw Error(d.detail||d.error||'Gonderilemedi');status.textContent='✅ Cozum alindi. Bot oyuna isliyor...';status.style.color='#76ef9b';timer=setInterval(progress,1800);progress();}}catch(e){{status.textContent='⚠️ '+e.message+'; tekrar dene.';status.style.color='#ffb36b';try{{hcaptcha.reset();}}catch{{}}}}}}</script></body></html>'''
     return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
 
 
