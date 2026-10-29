@@ -961,6 +961,7 @@ def cryptocrops_telegram_captcha_create(payload: dict[str, Any], request: Reques
     session = {
         "captcha_id": captcha_id,
         "license_id": str(lic.get("id") or ""),
+        "client_id": str(payload.get("client_id") or "").strip()[:160],
         "site_key": site_key,
         "kind": str(payload.get("kind") or "captcha")[:40],
         "page_url": str(payload.get("page_url") or "")[:500],
@@ -1063,13 +1064,10 @@ def cryptocrops_telegram_captcha_page(captcha_id: str) -> Response:
         return Response("<h3>CAPTCHA oturumu bulunamadi.</h3>", status_code=404, media_type="text/html")
     if session.get("status") == "consumed":
         return Response("<h3>✅ CAPTCHA tamamlandi. Bot devam ediyor.</h3>", status_code=200, media_type="text/html", headers={"Cache-Control": "no-store"})
-    site_key = str(session.get("site_key") or "")
     safe_id = "".join(ch for ch in str(captcha_id) if ch.isalnum() or ch in "-_")
-    if session.get("status") == "solved":
-        waiting = f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexus CryptoCrops CAPTCHA</title><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#07150d;color:#76ef9b;font:600 18px Segoe UI,Arial;text-align:center}}</style></head><body><div>✅ Cozum alindi.<br>Bot oyuna isliyor...</div><script>const id='{safe_id}';setInterval(async()=>{{try{{const r=await fetch('/cryptocrops/api/telegram/captcha/progress/'+id,{{cache:'no-store'}}),d=await r.json();if(d.status==='waiting')location.reload();else if(d.status==='consumed')document.body.innerHTML='<div>✅ Tamamlandi. Bot devam ediyor.</div>';}}catch{{}}}},1800);</script></body></html>'''
-        return Response(waiting, media_type="text/html", headers={"Cache-Control": "no-store"})
-    html = f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexus CryptoCrops CAPTCHA</title><script src="https://js.hcaptcha.com/1/api.js" async defer></script><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#07150d;color:#f4f8ee;font-family:Segoe UI,Arial}}.box{{width:min(92vw,460px);padding:28px;border:1px solid #4e7b5d;border-radius:22px;background:#10291b;text-align:center;box-shadow:0 24px 80px #0008}}h2{{color:#f3d26a}}#status{{color:#b8d4c0;margin:14px 0}}</style></head><body><div class="box"><h2>Nexus CryptoCrops</h2><p id="status">CAPTCHA dogrulamasini tamamla.</p><div class="h-captcha" data-sitekey="{site_key}" data-theme="dark" data-callback="done"></div></div><script>const id='{safe_id}';let timer=0;const status=document.getElementById('status');async function progress(){{try{{const r=await fetch('/cryptocrops/api/telegram/captcha/progress/'+id,{{cache:'no-store'}}),d=await r.json();if(d.status==='consumed'){{clearInterval(timer);status.textContent='✅ Tamamlandi. Bot devam ediyor.';status.style.color='#76ef9b';}}else if(d.status==='waiting'){{clearInterval(timer);location.reload();}}}}catch{{}}}}async function done(token){{status.textContent='Dogrulama bota gonderiliyor...';try{{const r=await fetch('/cryptocrops/api/telegram/captcha/solve',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{captcha_id:id,captcha_token:token}})}}),d=await r.json();if(!r.ok)throw Error(d.detail||d.error||'Gonderilemedi');status.textContent='✅ Cozum alindi. Bot oyuna isliyor...';status.style.color='#76ef9b';timer=setInterval(progress,1800);progress();}}catch(e){{status.textContent='⚠️ '+e.message+'; tekrar dene.';status.style.color='#ffb36b';try{{hcaptcha.reset();}}catch{{}}}}}}</script></body></html>'''
-    return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
+    client_id = "".join(ch for ch in str(session.get("client_id") or "") if ch.isalnum() or ch in "-_")
+    target = f"https://cryptocrops.net/earn/?nexus_telegram={safe_id}&nexus_client={client_id}"
+    return Response(status_code=302, headers={"Location": target, "Cache-Control": "no-store"})
 
 
 def api_auth_for_app(payload: AuthPayload, app_key: str) -> dict[str, Any]:

@@ -68,8 +68,8 @@ const expectedSolveUrl = `https://gateway.invalid/cryptocrops/telegram/captcha/$
 if (created.solve_url !== expectedSolveUrl) throw new Error(`wrong solve url: ${created.solve_url}`);
 
 const pageResponse = await worker.fetch(new Request(created.solve_url), env);
-const pageHtml = await pageResponse.text();
-if (!pageResponse.ok || !pageHtml.includes('h-captcha') || !pageHtml.includes('10000000-ffff-ffff-ffff-000000000001')) throw new Error('dedicated captcha page failed');
+const redirectUrl = pageResponse.headers.get('Location') || '';
+if (pageResponse.status !== 302 || !redirectUrl.startsWith('https://cryptocrops.net/earn/?nexus_telegram=') || !redirectUrl.includes('nexus_client=client-1')) throw new Error(`same-origin captcha redirect failed: ${pageResponse.status} ${redirectUrl}`);
 
 const captchaToken = 'test-captcha-token-that-is-long-enough';
 const solveResponse = await worker.fetch(new Request('https://gateway.invalid/cryptocrops/api/telegram/captcha/solve', {
