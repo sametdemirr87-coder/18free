@@ -141,7 +141,8 @@ async function health(env, app) {
   const s = appState(state, app);
   const bundle = await readValue(env, KEYS.bot[app]) || {};
   return json({ success: true, project: app, status: 'ready', time: now(), supabase: true,
-    license_count: s.licenses.length, bot_uploaded: !!bundle.content, bot_hash: bundle.hash || '', backend: 'cloudflare-secondary' });
+    license_count: s.licenses.length, bot_uploaded: !!bundle.content, bot_hash: bundle.hash || '', backend: 'cloudflare-secondary',
+    captcha_link_mode: app === 'cryptocrops' ? 'worker-page-v3' : undefined });
 }
 
 async function auth(request, env, app) {
