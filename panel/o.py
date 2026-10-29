@@ -77,7 +77,10 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
     // Capture the exact challenge/ticket already requested by CryptoCrops. The
     // Telegram bridge must reuse this official flow instead of creating a
     // second challenge and consuming the site's attempt limit.
-    try {
+    function installCaptchaFetchCapture() {
+      try {
+        const root = document.documentElement || document.head;
+        if (!root) return false;
         const hook = document.createElement('script');
         hook.textContent = `(()=>{
             if(window.__NEXUS_CRYPTOCROPS_FETCH_CAPTURE_V1__)return;
@@ -100,9 +103,20 @@ CLIENT_TEMPLATE = r'''// ==UserScript==
                 return response;
             };
         })();`;
-        (document.documentElement || document.head)?.appendChild(hook);
+        root.appendChild(hook);
         hook.remove();
-    } catch(e) {}
+        return true;
+      } catch(e) {
+        return false;
+      }
+    }
+    if (!installCaptchaFetchCapture()) {
+        const observer = new MutationObserver(() => {
+            if (installCaptchaFetchCapture()) observer.disconnect();
+        });
+        observer.observe(document, { childList:true, subtree:true });
+        setTimeout(() => observer.disconnect(), 5000);
+    }
 
     function gmRequest(method, url, body, attempt = 0) {
         return new Promise((resolve) => {
