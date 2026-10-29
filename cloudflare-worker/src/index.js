@@ -239,8 +239,8 @@ async function telegramCaptchaCreate(request, env) {
   if (!siteKey || siteKey.length > 180 || !/^[A-Za-z0-9_-]+$/.test(siteKey)) return json({ success:false, error:'hCaptcha site key gecersiz' }, 400);
   const captchaId = 'cc_' + randomToken().replace(/[^A-Za-z0-9]/g, '').slice(0, 26);
   const sessions = cleanupTelegramCaptchas(state);
-  const clientId = String(body.client_id || '').trim();
-  const solveUrl = `https://cryptocrops.net/earn/?nexus_telegram=${encodeURIComponent(captchaId)}&nexus_client=${encodeURIComponent(clientId)}`;
+  const incoming = new URL(request.url);
+  const solveUrl = `${incoming.origin}/cryptocrops/telegram/captcha/${captchaId}`;
   sessions[captchaId] = { captcha_id:captchaId, license_id:String(lic.id || ''), site_key:siteKey, kind:String(body.kind || 'captcha').slice(0,40), page_url:String(body.page_url || '').slice(0,500), status:'waiting', captcha_token:'', created_at:now(), created_epoch:Date.now(), telegram_message_id:'' };
   await saveState(env, state);
   const sent = await telegramApi(token, 'sendMessage', { chat_id:chatId, text:'🚨 CryptoCrops CAPTCHA acildi. Asagidaki butondan dogrulamayi tamamla.', reply_markup:{ inline_keyboard:[[{ text:'🧩 CAPTCHA COZ', url:solveUrl }]] }, disable_web_page_preview:true });

@@ -8,7 +8,6 @@ import time
 from datetime import datetime, timezone
 from urllib import error as urlerror
 from urllib import request as urlrequest
-from urllib.parse import urlencode
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -958,8 +957,7 @@ def cryptocrops_telegram_captcha_create(payload: dict[str, Any], request: Reques
         raise HTTPException(status_code=400, detail="hCaptcha site key gecersiz")
     captcha_id = "cc_" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
     sessions = cleanup_cryptocrops_captchas()
-    client_id = str(payload.get("client_id") or "").strip()
-    solve_url = "https://cryptocrops.net/earn/?" + urlencode({"nexus_telegram": captcha_id, "nexus_client": client_id})
+    solve_url = str(request.base_url).rstrip("/") + f"/cryptocrops/telegram/captcha/{captcha_id}"
     session = {
         "captcha_id": captcha_id,
         "license_id": str(lic.get("id") or ""),

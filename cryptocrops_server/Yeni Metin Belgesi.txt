@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus CryptoCrops Botrqssssssü
 // @namespace    nexus.cryptocrops.local
-// @version      0.9.12
+// @version      0.9.13
 // @match        https://cryptocrops.net/*
 // @match        https://*.hcaptcha.com/*hcaptcha-challenge*
 // @match        https://*.hcaptcha.com/*checkbox*
@@ -458,50 +458,6 @@
         };
     }
 
-    async function runTelegramCaptchaSolver(captchaId){
-        document.title='Nexus Telegram CAPTCHA';
-        const style=document.createElement('style');
-        style.textContent='html,body{margin:0!important;width:100%!important;height:100%!important;overflow:hidden!important;background:#07150d!important;color:#eef8ef!important;font-family:Segoe UI,Arial,sans-serif!important}.topbar,.sidebar,.main-content,.app-shell>header,.app-shell>nav,body>button{display:none!important}#nexus-telegram-solver{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:14px;background:radial-gradient(circle at top,#173b26,#07150d 62%)}#nexus-telegram-card{box-sizing:border-box;width:min(520px,calc(100vw - 28px));min-height:320px;display:grid;grid-template-rows:auto auto 1fr;gap:14px;padding:22px;border:1px solid #4d865f;border-radius:20px;background:#0d2618;box-shadow:0 24px 80px #000a}#nexus-telegram-card h2{margin:0;color:#79e69c;font-size:20px}#nexus-telegram-status{min-height:18px;color:#b8d4c0;font-size:12px}#nexus-telegram-slot{display:grid;place-items:center;min-height:170px;padding:14px;border:1px solid #345e42;border-radius:14px;background:#07150d}.h-captcha,[data-hcaptcha-widget-id],iframe[src*="hcaptcha.com"]{display:block!important;visibility:visible!important;opacity:1!important;margin:auto!important}';
-        document.head.append(style);
-        const root=document.createElement('div');root.id='nexus-telegram-solver';root.innerHTML='<section id="nexus-telegram-card"><h2>Nexus CryptoCrops CAPTCHA</h2><div id="nexus-telegram-status">CryptoCrops güvenlik oturumu hazırlanıyor…</div><div id="nexus-telegram-slot"></div></section>';document.body.append(root);
-        const status=(message,bad=false)=>{const node=document.getElementById('nexus-telegram-status');if(node){node.textContent=message;node.style.color=bad?'#ff9b9b':'#b8d4c0';}};
-        let widgetId=null,submitting=false,manualTimer=null,pollTimer=null;
-        const clearResponse=()=>document.querySelectorAll('#nexus-telegram-solver textarea[name="h-captcha-response"],#nexus-telegram-solver textarea[name="g-recaptcha-response"],#nexus-telegram-solver input[name="h-captcha-response"]').forEach(node=>{node.value='';});
-        const resetCaptcha=()=>{clearResponse();try{if(widgetId!==null)PAGE_WINDOW.hcaptcha?.reset(widgetId);else PAGE_WINDOW.hcaptcha?.reset();}catch{}submitting=false;};
-        const pollResult=async()=>{
-            const result=await telegramStatusRequest(captchaId);
-            if(result?.success&&result.status==='consumed'){
-                status('CAPTCHA oyunda onaylandı. Bot devam ediyor.');
-                clearInterval(manualTimer);clearTimeout(pollTimer);setTimeout(()=>window.close(),900);return;
-            }
-            if(result?.success&&result.status==='waiting'){
-                status('Çözüm oyunda onaylanmadı. CAPTCHA yenilendi; tekrar çöz.',true);resetCaptcha();return;
-            }
-            pollTimer=setTimeout(pollResult,1500);
-        };
-        const submitToken=async token=>{
-            token=String(token||'').trim();if(submitting||token.length<20)return;submitting=true;status('Çözüm Nexus bota aktarılıyor…');
-            const result=await telegramServerRequest('POST','/api/telegram/captcha/solve',{captcha_id:captchaId,captcha_token:token});
-            if(!result?.success){status(result?.error||'Çözüm gönderilemedi; tekrar dene.',true);resetCaptcha();return;}
-            status('Çözüm bota ulaştı. CryptoCrops onayı bekleniyor…');pollResult();
-        };
-        try{
-            const session=await telegramStatusRequest(captchaId);
-            if(!session?.success)throw Error(session?.error||'CAPTCHA oturumu bulunamadı.');
-            if(session.status==='consumed'){status('Bu CAPTCHA tamamlandı. Bot devam ediyor.');setTimeout(()=>window.close(),900);return;}
-            const siteKey=String(session.site_key||'');if(!siteKey)throw Error('CryptoCrops site anahtarı alınamadı.');
-            const slot=document.getElementById('nexus-telegram-slot');
-            const render=()=>{if(!PAGE_WINDOW.hcaptcha?.render)return false;try{widgetId=PAGE_WINDOW.hcaptcha.render(slot,{sitekey:siteKey,theme:'dark',callback:submitToken,'expired-callback':resetCaptcha,'error-callback':()=>status('hCaptcha yüklenemedi; tekrar dene.',true)});return true;}catch{return false;}};
-            if(!render()){
-                const callbackName='__nexusTelegramCaptchaReady_'+String(captchaId).replace(/\W/g,'');PAGE_WINDOW[callbackName]=()=>render();
-                const captchaScript=document.createElement('script');captchaScript.src='https://js.hcaptcha.com/1/api.js?render=explicit&recaptchacompat=off&onload='+encodeURIComponent(callbackName);captchaScript.async=true;captchaScript.defer=true;document.head.append(captchaScript);
-            }
-            manualTimer=setInterval(()=>{const token=[...document.querySelectorAll('#nexus-telegram-solver textarea[name="h-captcha-response"],#nexus-telegram-solver textarea[name="g-recaptcha-response"],#nexus-telegram-solver input[name="h-captcha-response"]')].map(node=>String(node.value||'').trim()).find(value=>value.length>20)||'';if(token)void submitToken(token);},350);
-            status('CAPTCHA CryptoCrops alan adında hazır. Doğrulamayı tamamla.');
-        }catch(error){status(error.message||'CAPTCHA hazırlanamadı.',true);}
-        window.addEventListener('beforeunload',()=>{clearInterval(manualTimer);clearTimeout(pollTimer);},{once:true});
-    }
-
     async function runRemoteCaptchaBridge(kind){
         const isFarm=kind==='farm';
         const source=isFarm?'nexus-farm-checkpoint':'nexus-faucet';
@@ -710,7 +666,7 @@
     function shell(){
         const panel = document.createElement('section'); panel.id = ROOT_ID;
         if(state.uiPos){ panel.style.left=`${state.uiPos.x}px`; panel.style.top=`${state.uiPos.y}px`; panel.style.right='auto'; }
-        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.12</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
+        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.13</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
         document.body.appendChild(panel);
         panel.querySelector('[data-close]').onclick=hideRoot;
         panel.querySelector('[data-window="settings"]').onclick=()=>toggleWindow('settings');
@@ -1134,9 +1090,8 @@
         if(window[INSTANCE_KEY]?.destroy===destroy)delete window[INSTANCE_KEY];
     }
 
-    if(PARAMS.get('nexus_telegram')){runTelegramCaptchaSolver(String(PARAMS.get('nexus_telegram')));return;}
     if(PARAMS.get('nexus_manual')==='1'){runRemoteCaptchaBridge('faucet');return;}
     if(PARAMS.get('nexus_checkpoint')==='1'){runRemoteCaptchaBridge('farm');return;}
     window.addEventListener('pagehide',closeCaptchaPopups);
-    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>onMessage({origin:location.origin,data:event.data,source:null});timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.12'};load();scheduleCycle(1200);
+    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>onMessage({origin:location.origin,data:event.data,source:null});timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.13'};load();scheduleCycle(1200);
 })();
