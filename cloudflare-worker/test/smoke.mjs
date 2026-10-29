@@ -67,6 +67,19 @@ if (!created.success || !created.captcha_id) throw new Error(`captcha create fai
 const expectedSolveUrl = `https://gateway.invalid/cryptocrops/telegram/captcha/${created.captcha_id}`;
 if (created.solve_url !== expectedSolveUrl) throw new Error(`wrong solve url: ${created.solve_url}`);
 
+// Parallel CAPTCHA creation used to overwrite the shared telegram_captchas JSON
+// object, leaving valid Telegram buttons with "session not found". Each session
+// must now live in its own Supabase row and survive concurrent creation.
+const parallelCreates = await Promise.all(['farm','faucet'].map(kind => worker.fetch(new Request('https://gateway.invalid/cryptocrops/api/telegram/captcha/create', {
+  method:'POST', headers:{ 'Content-Type':'application/json' },
+  body:JSON.stringify({ ...runtime, kind, site_key:'10000000-ffff-ffff-ffff-000000000001', page_url:'https://cryptocrops.net/earn/' })
+}), env).then(response => response.json())));
+for (const parallel of parallelCreates) {
+  if (!parallel.success || !parallel.solve_url) throw new Error(`parallel captcha create failed: ${JSON.stringify(parallel)}`);
+  const parallelPage = await worker.fetch(new Request(parallel.solve_url), env);
+  if (parallelPage.status !== 302) throw new Error(`parallel captcha session was overwritten: ${parallelPage.status}`);
+}
+
 const pageResponse = await worker.fetch(new Request(created.solve_url), env);
 const redirectUrl = pageResponse.headers.get('Location') || '';
 if (pageResponse.status !== 302 || !redirectUrl.startsWith('https://cryptocrops.net/earn/?nexus_telegram=') || !redirectUrl.includes('nexus_client=client-1')) throw new Error(`same-origin captcha redirect failed: ${pageResponse.status} ${redirectUrl}`);

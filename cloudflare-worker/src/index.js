@@ -142,7 +142,7 @@ async function health(env, app) {
   const bundle = await readValue(env, KEYS.bot[app]) || {};
   return json({ success: true, project: app, status: 'ready', time: now(), supabase: true,
     license_count: s.licenses.length, bot_uploaded: !!bundle.content, bot_hash: bundle.hash || '', backend: 'cloudflare-secondary',
-    captcha_link_mode: app === 'cryptocrops' ? 'same-origin-redirect-v4' : undefined });
+    captcha_link_mode: app === 'cryptocrops' ? 'isolated-session-v5' : undefined });
 }
 
 async function auth(request, env, app) {
@@ -199,16 +199,30 @@ async function telegramApi(token, method, payload) {
   }
 }
 
-function cleanupTelegramCaptchas(state) {
-  const s = appState(state, 'cryptocrops');
-  s.telegram_captchas ||= {};
-  const cutoff = Date.now() - 15 * 60 * 1000;
-  for (const [id, session] of Object.entries(s.telegram_captchas)) {
-    if (Number(session && session.created_epoch || 0) < cutoff) delete s.telegram_captchas[id];
+const CAPTCHA_SESSION_PREFIX = 'cryptocrops_captcha_';
+const CAPTCHA_SESSION_TTL_MS = 30 * 60 * 1000;
+
+function captchaSessionKey(captchaId) {
+  const safe = String(captchaId || '').replace(/[^A-Za-z0-9_-]/g, '');
+  return safe ? CAPTCHA_SESSION_PREFIX + safe : '';
+}
+
+async function readTelegramCaptcha(env, captchaId) {
+  const key = captchaSessionKey(captchaId);
+  if (!key) return null;
+  const session = await readValue(env, key);
+  if (!session || !session.captcha_id) return null;
+  if (Date.now() - Number(session.created_epoch || 0) > CAPTCHA_SESSION_TTL_MS) {
+    await writeValue(env, key, null);
+    return null;
   }
-  const ids = Object.keys(s.telegram_captchas);
-  if (ids.length > 30) ids.sort((a,b) => Number(s.telegram_captchas[a].created_epoch || 0) - Number(s.telegram_captchas[b].created_epoch || 0)).slice(0, ids.length - 30).forEach(id => delete s.telegram_captchas[id]);
-  return s.telegram_captchas;
+  return session;
+}
+
+async function writeTelegramCaptcha(env, session) {
+  const key = captchaSessionKey(session && session.captcha_id);
+  if (!key) throw new Error('CAPTCHA oturum kimligi gecersiz');
+  await writeValue(env, key, session);
 }
 
 async function telegramRegister(request, env) {
@@ -239,63 +253,62 @@ async function telegramCaptchaCreate(request, env) {
   const siteKey = String(body.site_key || '').trim();
   if (!siteKey || siteKey.length > 180 || !/^[A-Za-z0-9_-]+$/.test(siteKey)) return json({ success:false, error:'hCaptcha site key gecersiz' }, 400);
   const captchaId = 'cc_' + randomToken().replace(/[^A-Za-z0-9]/g, '').slice(0, 26);
-  const sessions = cleanupTelegramCaptchas(state);
   const incoming = new URL(request.url);
   const solveUrl = `${incoming.origin}/cryptocrops/telegram/captcha/${captchaId}`;
-  sessions[captchaId] = { captcha_id:captchaId, license_id:String(lic.id || ''), client_id:String(body.client_id || '').trim().slice(0,160), site_key:siteKey, kind:String(body.kind || 'captcha').slice(0,40), page_url:String(body.page_url || '').slice(0,500), status:'waiting', captcha_token:'', created_at:now(), created_epoch:Date.now(), telegram_message_id:'' };
-  await saveState(env, state);
+  const session = { captcha_id:captchaId, license_id:String(lic.id || ''), client_id:String(body.client_id || '').trim().slice(0,160), site_key:siteKey, kind:String(body.kind || 'captcha').slice(0,40), page_url:String(body.page_url || '').slice(0,500), status:'waiting', captcha_token:'', created_at:now(), created_epoch:Date.now(), telegram_message_id:'' };
+  await writeTelegramCaptcha(env, session);
   const sent = await telegramApi(token, 'sendMessage', { chat_id:chatId, text:'🚨 CryptoCrops CAPTCHA acildi. Asagidaki butondan dogrulamayi tamamla.', reply_markup:{ inline_keyboard:[[{ text:'🧩 CAPTCHA COZ', url:solveUrl }]] }, disable_web_page_preview:true });
-  if (!sent.ok) { delete sessions[captchaId]; await saveState(env, state); return json({ success:false, error:'Telegram mesaji gonderilemedi' }, 400); }
-  sessions[captchaId].telegram_message_id = String(sent.data && sent.data.result && sent.data.result.message_id || '');
-  await saveState(env, state); return json({ success:true, captcha_id:captchaId, poll_ms:1800, solve_url:solveUrl });
+  if (!sent.ok) { await writeValue(env, captchaSessionKey(captchaId), null); return json({ success:false, error:'Telegram mesaji gonderilemedi' }, 400); }
+  session.telegram_message_id = String(sent.data && sent.data.result && sent.data.result.message_id || '');
+  await writeTelegramCaptcha(env, session); return json({ success:true, captcha_id:captchaId, poll_ms:1800, solve_url:solveUrl });
 }
 
 async function telegramCaptchaStatus(request, env) {
   const url = new URL(request.url); const body = Object.fromEntries(url.searchParams.entries()); const state = await loadState(env); const lic = requireCryptoRuntime(state, body);
-  const session = cleanupTelegramCaptchas(state)[String(body.captcha_id || '')] || {};
-  if (!session.captcha_id || String(session.license_id || '') !== String(lic.id || '')) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
+  const session = await readTelegramCaptcha(env, body.captcha_id);
+  if (!session || String(session.license_id || '') !== String(lic.id || '')) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
   const solved = session.status === 'solved' && !!session.captcha_token;
   return json({ success:true, status:solved ? 'solved' : String(session.status || 'waiting'), solved, captcha_token:solved ? session.captcha_token : '', site_key:String(session.site_key || ''), kind:String(session.kind || 'captcha') }, 200, { 'Cache-Control':'no-store' });
 }
 
 async function telegramCaptchaAck(request, env) {
   const body = await bodyJson(request); const state = await loadState(env); const lic = requireCryptoRuntime(state, body);
-  const session = cleanupTelegramCaptchas(state)[String(body.captcha_id || '')] || {};
-  if (!session.captcha_id || String(session.license_id || '') !== String(lic.id || '')) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
+  const session = await readTelegramCaptcha(env, body.captcha_id);
+  if (!session || String(session.license_id || '') !== String(lic.id || '')) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
   session.status = 'consumed'; session.consumed_at = now(); session.captcha_token = '';
   if (session.telegram_message_id && lic.telegram_token && lic.telegram_chat_id) await telegramApi(lic.telegram_token, 'deleteMessage', { chat_id:lic.telegram_chat_id, message_id:session.telegram_message_id });
-  await saveState(env, state); return json({ success:true });
+  await writeTelegramCaptcha(env, session); return json({ success:true });
 }
 
 async function telegramCaptchaRetry(request, env) {
   const body = await bodyJson(request); const state = await loadState(env); const lic = requireCryptoRuntime(state, body);
-  const session = cleanupTelegramCaptchas(state)[String(body.captcha_id || '')] || {};
-  if (!session.captcha_id || String(session.license_id || '') !== String(lic.id || '')) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
+  const session = await readTelegramCaptcha(env, body.captcha_id);
+  if (!session || String(session.license_id || '') !== String(lic.id || '')) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
   if (session.status === 'consumed') return json({ success:true, status:'consumed' });
   session.status = 'waiting'; session.captcha_token = ''; session.retry_at = now();
-  await saveState(env, state); return json({ success:true, status:'waiting' });
+  await writeTelegramCaptcha(env, session); return json({ success:true, status:'waiting' });
 }
 
 async function telegramCaptchaProgress(env, captchaId) {
-  const state = await loadState(env); const session = cleanupTelegramCaptchas(state)[String(captchaId || '')] || {};
-  if (!session.captcha_id) return json({ success:false, status:'missing' }, 404, { 'Cache-Control':'no-store' });
+  const session = await readTelegramCaptcha(env, captchaId);
+  if (!session) return json({ success:false, status:'missing' }, 404, { 'Cache-Control':'no-store' });
   return json({ success:true, status:String(session.status || 'waiting') }, 200, { 'Cache-Control':'no-store' });
 }
 
 async function telegramCaptchaSolve(request, env) {
-  const body = await bodyJson(request); const state = await loadState(env); const sessions = cleanupTelegramCaptchas(state); const session = sessions[String(body.captcha_id || '')] || {};
+  const body = await bodyJson(request); const session = await readTelegramCaptcha(env, body.captcha_id);
   const captchaToken = String(body.captcha_token || '').trim();
-  if (!session.captcha_id) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
+  if (!session) return json({ success:false, error:'CAPTCHA oturumu bulunamadi' }, 404);
   if (captchaToken.length < 20) return json({ success:false, error:'CAPTCHA token gecersiz' }, 400);
   if (session.status === 'consumed') return json({ success:true, already_processed:true });
   if (!['waiting','solved'].includes(session.status)) return json({ success:false, error:'CAPTCHA oturumu kapandi' }, 410);
   Object.assign(session, { captcha_token:captchaToken, status:'solved', solved_at:now() });
-  await saveState(env, state); return json({ success:true });
+  await writeTelegramCaptcha(env, session); return json({ success:true });
 }
 
 async function telegramCaptchaPage(env, captchaId) {
-  const state = await loadState(env); const session = cleanupTelegramCaptchas(state)[String(captchaId || '')] || {};
-  if (!session.captcha_id) return new Response('<h3>CAPTCHA oturumu bulunamadi.</h3>', { status:404, headers:{ 'Content-Type':'text/html; charset=utf-8' } });
+  const session = await readTelegramCaptcha(env, captchaId);
+  if (!session) return new Response('<h3>CAPTCHA oturumu bulunamadi veya suresi doldu. Botun gonderdigi en yeni baglantiyi ac.</h3>', { status:404, headers:{ 'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store' } });
   if (session.status === 'consumed') return new Response('<h3>✅ CAPTCHA tamamlandi. Bot devam ediyor.</h3>', { status:200, headers:{ 'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store' } });
   const safeId = String(captchaId || '').replace(/[^A-Za-z0-9_-]/g, '');
   const clientId = String(session.client_id || '').replace(/[^A-Za-z0-9_-]/g, '');
