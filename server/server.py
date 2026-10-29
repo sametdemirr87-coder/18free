@@ -984,7 +984,7 @@ def cryptocrops_telegram_captcha_create(payload: dict[str, Any], request: Reques
         raise HTTPException(status_code=400, detail="Telegram mesaji gonderilemedi")
     session["telegram_message_id"] = str((sent.get("result") or {}).get("message_id") or "")
     save_state(force=True)
-    return {"success": True, "captcha_id": captcha_id, "poll_ms": 1800}
+    return {"success": True, "captcha_id": captcha_id, "poll_ms": 1800, "solve_url": solve_url}
 
 
 @app.get("/cryptocrops/api/telegram/captcha/status")

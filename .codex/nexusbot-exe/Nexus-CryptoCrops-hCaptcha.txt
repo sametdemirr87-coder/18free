@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus CryptoCrops Botrqssssssü
 // @namespace    nexus.cryptocrops.local
-// @version      0.9.8
+// @version      0.9.9
 // @match        https://cryptocrops.net/*
 // @match        https://*.hcaptcha.com/*hcaptcha-challenge*
 // @match        https://*.hcaptcha.com/*checkbox*
@@ -37,15 +37,6 @@
             }
         },500);
         setTimeout(()=>clearInterval(checkboxInterval),30000);
-        return;
-    }
-
-    if(PARAMS.get('nexus_manual') === '1'){
-        runFaucetBridge();
-        return;
-    }
-    if(PARAMS.get('nexus_checkpoint') === '1'){
-        runCheckpointBridge();
         return;
     }
 
@@ -342,6 +333,7 @@
 
     let captchaAlarmContext=null;
     let captchaAlarmPlaying=false;
+    let captchaAlarmQueued=false;
     function primeCaptchaAlarm(){
         try{
             const AudioContextClass=window.AudioContext||window.webkitAudioContext;
@@ -351,7 +343,7 @@
         }catch{}
     }
     function playCaptchaAlarm(){
-        if(captchaAlarmPlaying)return;
+        if(captchaAlarmPlaying){captchaAlarmQueued=true;return;}
         primeCaptchaAlarm();
         const context=captchaAlarmContext;
         if(!context)return;
@@ -371,7 +363,7 @@
                 oscillator.connect(gain);gain.connect(context.destination);
                 oscillator.start(at);oscillator.stop(at+.32);
             }
-            setTimeout(()=>{captchaAlarmPlaying=false;},1750);
+            setTimeout(()=>{captchaAlarmPlaying=false;if(captchaAlarmQueued){captchaAlarmQueued=false;playCaptchaAlarm();}},1750);
         };
         if(context.state==='running')start();
         else context.resume().then(start).catch(()=>{});
@@ -466,6 +458,65 @@
         };
     }
 
+    async function runRemoteCaptchaBridge(kind){
+        const isFarm=kind==='farm';
+        const source=isFarm?'nexus-farm-checkpoint':'nexus-faucet';
+        const title=isFarm?'Nexus Farm Security':'Nexus Faucet Pay';
+        const send=(type,extra={})=>{const data={source,client_id:BRIDGE_CLIENT_ID,type,...extra};try{window.opener?.postMessage(data,location.origin);}catch{}try{captchaBridgeChannel?.postMessage(data);}catch{}};
+        document.title=title;
+        const style=document.createElement('style');
+        style.textContent='html,body{margin:0!important;width:100%!important;height:100%!important;overflow:hidden!important;background:#07150d!important;color:#eef8ef!important;font-family:Segoe UI,Arial,sans-serif!important}.topbar,.sidebar,.main-content,.app-shell>header,.app-shell>nav,body>button{display:none!important}#nexus-remote-captcha{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:14px;background:radial-gradient(circle at top,#173b26,#07150d 62%)}#nexus-remote-card{box-sizing:border-box;width:min(520px,calc(100vw - 28px));height:min(620px,calc(100vh - 28px));display:grid;grid-template-rows:auto auto 1fr;gap:10px;padding:18px;border:1px solid #4d865f;border-radius:20px;background:#0d2618;box-shadow:0 24px 80px #000a}#nexus-remote-card h2{margin:0;color:#79e69c;font-size:20px}#nexus-remote-status{min-height:18px;color:#b8d4c0;font-size:12px}#nexus-remote-frame{width:100%;height:100%;border:0;border-radius:14px;background:#07150d}';
+        document.head.append(style);
+        const root=document.createElement('div');root.id='nexus-remote-captcha';root.innerHTML=`<section id="nexus-remote-card"><h2>${title}</h2><div id="nexus-remote-status">Resmi CAPTCHA oturumu hazırlanıyor…</div><iframe id="nexus-remote-frame" title="Nexus CAPTCHA"></iframe></section>`;document.body.append(root);
+        send('opened');
+        const status=(message,bad=false)=>{const node=document.getElementById('nexus-remote-status');if(node){node.textContent=message;node.style.color=bad?'#ff9b9b':'#b8d4c0';}};
+        const officialRequest=async(path,body)=>{const response=await fetch(path,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});let data={};try{data=await response.json();}catch{}if(!response.ok){const error=Error(data.message||data.error||('HTTP '+response.status));error.code=data.error||'';throw error;}return data;};
+        let flow=null,pollTimer=null,done=false;
+        const cleanup=()=>{if(pollTimer)clearTimeout(pollTimer);pollTimer=null;try{captchaBridgeChannel?.close();}catch{}};
+        const finish=async token=>{
+            if(done)return;done=true;status('CAPTCHA çözümü oyuna işleniyor…');
+            try{
+                if(isFarm){
+                    const result=await officialRequest('/api/farm-checkpoint/verify',{attempt_id:flow.attemptId,required_since:flow.requiredSince,captcha_token:token,captcha_ticket:flow.ticket});
+                    if(!result.verified||result.checkpoint?.required)throw Error('Çiftlik doğrulaması sunucuda onaylanmadı.');
+                    send('passed');status('Çiftlik doğrulandı. Bot devam ediyor.');
+                }else{
+                    const result=await officialRequest('/api/earn/faucet/collect',{idempotency_key:crypto.randomUUID(),faucet_challenge:flow.challengeId,captcha_token:token,captcha_ticket:flow.ticket});
+                    send('claimed',{claimed:result.claimed||null});status('Faucet Pay başarıyla alındı.');
+                }
+                cleanup();try{window.opener?.focus();}catch{}setTimeout(()=>window.close(),650);
+            }catch(error){done=false;status('Çözüm işlenemedi: '+error.message,true);send('retry',{reason:error.message});}
+        };
+        try{
+            if(isFarm){
+                const attemptId=crypto.randomUUID();const payload=await officialRequest('/api/farm-checkpoint/challenge',{attempt_id:attemptId});
+                if(payload.verified&&!payload.checkpoint?.required){send('passed');cleanup();setTimeout(()=>window.close(),350);return;}
+                const siteKey=String(payload.captcha?.site_key||''),ticket=String(payload.captcha?.ticket||''),requiredSince=payload.checkpoint?.required_since;
+                if(!siteKey||!ticket||requiredSince==null)throw Error('Resmi çiftlik CAPTCHA oturumu alınamadı.');
+                flow={siteKey,ticket,attemptId,requiredSince};
+            }else{
+                const payload=await officialRequest('/api/earn/faucet-challenge',{});const siteKey=String(payload.captcha?.site_key||''),ticket=String(payload.verification?.ticket||''),challengeId=String(payload.challenge?.challenge_id||'');
+                if(!siteKey||!ticket||!challengeId)throw Error('Resmi Faucet CAPTCHA oturumu alınamadı.');
+                flow={siteKey,ticket,challengeId};
+            }
+            const settings=loadTelegramSettings();
+            if(!settings.enabled||!settings.botToken||!settings.chatId)throw Error('Telegram ayarlanmamış veya kapalı.');
+            let created=await telegramServerRequest('POST','/api/telegram/captcha/create',{kind,site_key:flow.siteKey,page_url:location.href});
+            if(!created?.success&&/ayarlanmamis|not configured/i.test(String(created?.error||''))){
+                const repaired=await telegramServerRequest('POST','/api/telegram/register',{telegram_token:settings.botToken,telegram_chat_id:settings.chatId});
+                if(repaired?.success)created=await telegramServerRequest('POST','/api/telegram/captcha/create',{kind,site_key:flow.siteKey,page_url:location.href});
+            }
+            if(!created?.success||!created.captcha_id||!created.solve_url)throw Error(created?.error||'Telegram CAPTCHA bağlantısı oluşturulamadı.');
+            document.getElementById('nexus-remote-frame').src=created.solve_url;
+            status('CAPTCHA popup ve özel Telegram sohbetine gönderildi.');
+            send('telegram-sent',{kind});
+            const captchaId=created.captcha_id;let attempts=0;
+            const poll=async()=>{if(done||attempts++>300)return;const result=await telegramStatusRequest(captchaId);if(result?.success&&result.solved&&result.captcha_token){await finish(String(result.captcha_token));return;}pollTimer=setTimeout(poll,Math.max(1200,Number(created.poll_ms||1800)));};
+            poll();
+        }catch(error){status(error.message||'CAPTCHA hazırlanamadı.',true);send('bridge-error',{reason:error.message||String(error)});}
+        window.addEventListener('beforeunload',cleanup,{once:true});
+    }
+
     function runFaucetBridge(){
         let clicked=false,focused=false,alarmNotified=false,challengeNotified=false,captchaMissingNotified=false;
         const approvalDeadline=Date.now()+10000;
@@ -481,7 +532,7 @@
         const frame=()=>document.querySelector('iframe[src*="hcaptcha.com"],iframe[title*="hCaptcha"]');
         const solved=()=>[...document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]')].some(node=>String(node.value||'').trim().length>20);
         const challengeOpen=()=>[...document.querySelectorAll('iframe')].some(node=>/challenge/i.test(node.title||'')&&node.getBoundingClientRect().width>200&&node.getBoundingClientRect().height>180&&getComputedStyle(node).visibility!=='hidden');
-        const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);return url.searchParams.get('sitekey')||url.searchParams.get('k')||'';}catch{return '';}};
+        const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);const hash=new URLSearchParams(String(url.hash||'').replace(/^#/,''));return url.searchParams.get('sitekey')||url.searchParams.get('k')||hash.get('sitekey')||hash.get('k')||'';}catch{return '';}};
         let telegramSent=false,officialFlow=null,flowPromise=null,telegramApplying=false;
         const jsonRequest=async(url,options={})=>{const response=await fetch(url,options);let data={};try{data=await response.json();}catch{}if(!response.ok){const error=Error(data.message||data.error||('HTTP '+response.status));error.code=data.error||'';throw error;}return data;};
         const prepareOfficialFlow=()=>{if(officialFlow)return Promise.resolve(officialFlow);if(flowPromise)return flowPromise;flowPromise=(async()=>{const captured=await capturedCaptchaFlow('faucet');const payload=captured?.payload||{};const challengeId=String(payload.challenge?.challenge_id||''),ticket=String(payload.verification?.ticket||''),key=String(payload.captcha?.site_key||siteKey()||'');if(!challengeId||!ticket||!key)throw Error('Faucet resmi CAPTCHA oturumu yakalanamadi; popupi bir kez yeniden ac.');officialFlow={challengeId,ticket,siteKey:key};return officialFlow;})().finally(()=>{flowPromise=null;});return flowPromise;};
@@ -528,7 +579,7 @@
         const frame=()=>document.querySelector('iframe[src*="hcaptcha.com"],iframe[title*="hCaptcha"]');
         const solved=()=>[...document.querySelectorAll('textarea[name="h-captcha-response"],textarea[name="g-recaptcha-response"],input[name="h-captcha-response"]')].some(node=>String(node.value||'').trim().length>20);
         const challengeOpen=()=>[...document.querySelectorAll('iframe')].some(node=>/challenge/i.test(node.title||'')&&node.getBoundingClientRect().width>200&&node.getBoundingClientRect().height>180&&getComputedStyle(node).visibility!=='hidden');
-        const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);return url.searchParams.get('sitekey')||url.searchParams.get('k')||'';}catch{return '';}};
+        const siteKey=()=>{const direct=document.querySelector('[data-sitekey]')?.getAttribute('data-sitekey');if(direct)return direct;try{const src=frame()?.src||'';const url=new URL(src);const hash=new URLSearchParams(String(url.hash||'').replace(/^#/,''));return url.searchParams.get('sitekey')||url.searchParams.get('k')||hash.get('sitekey')||hash.get('k')||'';}catch{return '';}};
         let telegramSent=false,officialFlow=null,flowPromise=null,telegramApplying=false;
         const jsonRequest=async(url,options={})=>{const response=await fetch(url,options);let data={};try{data=await response.json();}catch{}if(!response.ok){const error=Error(data.message||data.error||('HTTP '+response.status));error.code=data.error||'';throw error;}return data;};
         const prepareOfficialFlow=()=>{if(officialFlow)return Promise.resolve(officialFlow);if(flowPromise)return flowPromise;flowPromise=(async()=>{const captured=await capturedCaptchaFlow('farm');const payload=captured?.payload||{},attemptId=String(captured?.request?.attempt_id||'');if(payload.verified&&!payload.checkpoint?.required){send('passed');return null;}const ticket=String(payload.captcha?.ticket||''),key=String(payload.captcha?.site_key||siteKey()||''),requiredSince=payload.checkpoint?.required_since;if(!attemptId||!ticket||!key||requiredSince==null)throw Error('Ciftlik resmi CAPTCHA oturumu yakalanamadi; popupi bir kez yeniden ac.');officialFlow={attemptId,ticket,siteKey:key,requiredSince};return officialFlow;})().finally(()=>{flowPromise=null;});return flowPromise;};
@@ -603,7 +654,7 @@
     function shell(){
         const panel = document.createElement('section'); panel.id = ROOT_ID;
         if(state.uiPos){ panel.style.left=`${state.uiPos.x}px`; panel.style.top=`${state.uiPos.y}px`; panel.style.right='auto'; }
-        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.8</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
+        panel.innerHTML = `<header class="nx5-head"><div class="nx5-brand"><span class="nx5-mark">N</span><div><div class="nx5-title"><span class="nx5-tt">Nexus CryptoCrops</span><span class="nx5-version">v0.9.9</span></div><div class="nx5-sub"><i class="nx5-live"><b></b><b></b><b></b></i><span data-subtitle>${t('subtitle')}</span></div></div></div><div class="nx5-head-actions"><button class="nx5-icon" data-window="settings" title="${t('settings')}">${uiIcon('settings','nx5-inline-icon')}</button><button class="nx5-icon nx5-close" data-close title="${t('minimize')}">X</button></div></header><div class="nx5-main"></div><div class="nx5-log-wrap"><div class="nx5-log-tools"><span class="nx5-log-title"><i></i><strong data-log-title>${t('activityLog')}</strong></span><div class="nx5-log-actions"><span class="nx5-counts" data-log-counts></span><button class="nx5-copy" data-clear-logs title="Clear">${uiIcon('trash','nx5-inline-icon')}</button><button class="nx5-copy" data-copy-all title="${t('copyAll')}">${uiIcon('copy','nx5-inline-icon')}</button></div></div><div class="nx5-log"></div></div>`;
         document.body.appendChild(panel);
         panel.querySelector('[data-close]').onclick=hideRoot;
         panel.querySelector('[data-window="settings"]').onclick=()=>toggleWindow('settings');
@@ -777,7 +828,7 @@
         if(!state.checkpointNotified){state.checkpointNotified=true;log(t('checkpointNeeded'),'warn');}
         if(state.checkpointPopup&&!state.checkpointPopup.closed){state.checkpointPopup.focus();return;}
         const clientId=encodeURIComponent(String(nexusClient().clientId||BRIDGE_CLIENT_ID));
-        state.checkpointPopup=window.open('/farm/?nexus_checkpoint=1&nexus_client='+clientId,'nexusFarmSecurity_'+String(nexusClient().scriptId||clientId).replace(/\W/g,''),'popup=yes,width=590,height=680,resizable=yes,scrollbars=yes');
+        state.checkpointPopup=window.open('/earn/?nexus_checkpoint=1&nexus_client='+clientId,'nexusFarmSecurity_'+String(nexusClient().scriptId||clientId).replace(/\W/g,''),'popup=yes,width=590,height=680,resizable=yes,scrollbars=yes');
         log(state.checkpointPopup?t('checkpointOpened'):t('checkpointBlocked'),state.checkpointPopup?'info':'bad');
         if(!state.checkpointPopup&&!checkpointVisible())state.checkpointProbeAt=Date.now()+5000;
     }
@@ -793,9 +844,14 @@
         state.checkpointPopup=null;log(t('checkpointRetry'),'warn');
         state.checkpointRetryTimer=setTimeout(()=>{state.checkpointRetryTimer=null;if(state.running&&!state.destroyed)requestFarmCheckpoint();},1200);
     }
+    function closeCaptchaPopups(){
+        for(const popup of [state.checkpointPopup,state.faucetPopup]){try{if(popup&&!popup.closed)popup.close();}catch{}}
+        state.checkpointPopup=null;state.faucetPopup=null;
+    }
     function reloadOnceAfterCaptcha(kind){
         if(state.reloadPending||state.destroyed)return;
         state.reloadPending=true;
+        closeCaptchaPopups();
         try{sessionStorage.setItem(RELOAD_STATE_KEY,JSON.stringify({running:state.running,kind:String(kind||'captcha'),expires:Date.now()+45000}));}catch{}
         setTimeout(()=>location.reload(),700);
     }
@@ -936,7 +992,7 @@
         if(state.faucetPopup&&!state.faucetPopup.closed){state.faucetPopup.focus();return;}
         state.faucetClaimLogged=false;
         const clientId=encodeURIComponent(String(nexusClient().clientId||BRIDGE_CLIENT_ID));
-        state.faucetPopup=window.open('/faucet/?nexus_manual=1&nexus_client='+clientId,'nexusFaucetPay_'+String(nexusClient().scriptId||clientId).replace(/\W/g,''),'popup=yes,width=610,height=570,resizable=yes,scrollbars=yes');
+        state.faucetPopup=window.open('/earn/?nexus_manual=1&nexus_client='+clientId,'nexusFaucetPay_'+String(nexusClient().scriptId||clientId).replace(/\W/g,''),'popup=yes,width=610,height=650,resizable=yes,scrollbars=yes');
         if(state.faucetPopup)log(automatic?t('autoOpened'):t('captchaWaiting'),'info');else log(t('popupBlocked'),'bad');
     }
     function retryFaucetPopup(){
@@ -1022,5 +1078,8 @@
         if(window[INSTANCE_KEY]?.destroy===destroy)delete window[INSTANCE_KEY];
     }
 
-    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>onMessage({origin:location.origin,data:event.data,source:null});timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.8'};load();scheduleCycle(1200);
+    if(PARAMS.get('nexus_manual')==='1'){runRemoteCaptchaBridge('faucet');return;}
+    if(PARAMS.get('nexus_checkpoint')==='1'){runRemoteCaptchaBridge('farm');return;}
+    window.addEventListener('pagehide',closeCaptchaPopups);
+    installStyle();installLauncher();installTelegramSettings();shell();renderMain();window.addEventListener('message',onMessage);if(captchaBridgeChannel)captchaBridgeChannel.onmessage=event=>onMessage({origin:location.origin,data:event.data,source:null});timers.add(setInterval(tick,1000));reportBridgeStatus();timers.add(setInterval(reportBridgeStatus,2500));if(CAPTCHA_RELOAD_STATE)setTimeout(()=>sessionStorage.removeItem(RELOAD_STATE_KEY),20000);window[INSTANCE_KEY]={destroy,version:'0.9.9'};load();scheduleCycle(1200);
 })();

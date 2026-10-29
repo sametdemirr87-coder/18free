@@ -237,7 +237,7 @@ async function telegramCaptchaCreate(request, env) {
   const sent = await telegramApi(token, 'sendMessage', { chat_id:chatId, text:'🚨 CryptoCrops CAPTCHA acildi. Asagidaki butondan dogrulamayi tamamla.', reply_markup:{ inline_keyboard:[[{ text:'🧩 CAPTCHA COZ', url:solveUrl }]] }, disable_web_page_preview:true });
   if (!sent.ok) { delete sessions[captchaId]; await saveState(env, state); return json({ success:false, error:'Telegram mesaji gonderilemedi' }, 400); }
   sessions[captchaId].telegram_message_id = String(sent.data && sent.data.result && sent.data.result.message_id || '');
-  await saveState(env, state); return json({ success:true, captcha_id:captchaId, poll_ms:1800 });
+  await saveState(env, state); return json({ success:true, captcha_id:captchaId, poll_ms:1800, solve_url:solveUrl });
 }
 
 async function telegramCaptchaStatus(request, env) {
